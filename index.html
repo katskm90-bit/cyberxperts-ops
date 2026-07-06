@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0b1b33" />
+  <title>Cyberxperts Operations</title>
+  <link rel="icon" type="image/png" href="brand/logo.png" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- Login screen -->
+  <section id="screen-login" class="screen">
+    <div class="auth-box">
+      <img src="brand/logo.png" alt="Cyberxperts" class="auth-logo" />
+      <h1>Sign in</h1>
+      <p class="muted">Internal operations platform</p>
+      <form id="login-form">
+        <label for="login-email">Email</label>
+        <input id="login-email" type="email" required />
+        <label for="login-password">Password</label>
+        <input id="login-password" type="password" required />
+        <p id="login-error" class="error"></p>
+        <button type="submit">Sign in</button>
+      </form>
+      <p class="hint">Every account requires a second factor after your password.</p>
+    </div>
+  </section>
+
+  <!-- MFA enrollment screen, first time only -->
+  <section id="screen-mfa-enroll" class="screen hidden">
+    <div class="auth-box">
+      <h1>Set up your second factor</h1>
+      <p class="muted">
+        Required once, for this account. Use Zoho OneAuth, Google Authenticator, or
+        Microsoft Authenticator to scan the code below.
+      </p>
+      <img id="enroll-qr" alt="Scan with your authenticator app" class="qr" />
+      <form id="enroll-form">
+        <label for="enroll-code">Enter the six digit code from your app</label>
+        <input id="enroll-code" type="text" inputmode="numeric" required />
+        <p id="enroll-error" class="error"></p>
+        <button type="submit">Verify and continue</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- MFA challenge screen, returning sessions -->
+  <section id="screen-mfa-challenge" class="screen hidden">
+    <div class="auth-box">
+      <h1>Enter your code</h1>
+      <p class="muted">Open your authenticator app and enter the current six digit code.</p>
+      <form id="challenge-form">
+        <input id="challenge-code" type="text" inputmode="numeric" required />
+        <p id="challenge-error" class="error"></p>
+        <button type="submit">Verify</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- Main application -->
+  <section id="screen-app" class="screen hidden">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <img src="brand/logo.png" alt="Cyberxperts" />
+      </div>
+      <nav id="nav-links"></nav>
+      <div class="sidebar-user">
+        <p id="nav-name"></p>
+        <p id="nav-role" class="muted small"></p>
+        <button id="sign-out" class="link-button">Sign out</button>
+      </div>
+    </aside>
+
+    <main class="content">
+
+      <div class="module" data-module="overview">
+        <h1>Overview</h1>
+        <p class="intro">Rollup across every directorate, or your own working area, depending on your access level.</p>
+        <div class="card"><h2>Pipeline status</h2><p>Structure only. Tender pipeline, private sector pipeline, and channel partner deals will appear here.</p></div>
+        <div class="card"><h2>Delivery status</h2><p>Structure only. Active projects across IT Delivery and Cybersecurity managed services.</p></div>
+        <div class="card"><h2>Outstanding approvals</h2><p>Structure only. Anything above a configured threshold, waiting on sign off.</p></div>
+      </div>
+
+      <div class="module hidden" data-module="sales">
+        <h1>Sales & Bids</h1>
+        <p class="intro">Two pipelines run in parallel: tender based public sector opportunities, and direct private sector opportunities. Channel partner deals are tracked separately.</p>
+        <div class="card"><h2>Tender pipeline</h2><p>Structure only. Opportunity intake, Bids Manager and Bids Admin compilation, technical scoping handoff to Cybersecurity, submission, win or loss recording.</p></div>
+        <div class="card"><h2>Private sector pipeline</h2><p>Structure only. Lead intake, qualification, Pre-sales and Solutions Architect scoping, proposal, and contract stages.</p></div>
+        <div class="card"><h2>Channel partner deal registration</h2><p>Structure only. Partner sourced opportunities, tracked independently.</p></div>
+        <div class="card"><h2>Compliance document register</h2><p>Awaiting your document list. Tender eligibility documents with expiry alerts.</p></div>
+        <div class="card"><h2>Contract renewal tracking</h2><p>Default alert window: 60 days. Configurable in Settings.</p></div>
+      </div>
+
+      <div class="module hidden" data-module="cybersecurity">
+        <h1>Cybersecurity</h1>
+        <p class="intro">Technical scoping for both sales pipelines, plus findings from live client engagements that indicate further need.</p>
+        <div class="card"><h2>Scoping and sign off queue</h2><p>Structure only. Proposals awaiting technical scoping from either pipeline.</p></div>
+        <div class="card"><h2>Second reviewer control</h2><p>Threshold is a placeholder. Proposals above a configurable value require a second technical reviewer.</p></div>
+        <div class="card"><h2>Findings to Sales</h2><p>Structure only. Findings that suggest a client needs further work are routed to the relevant Account Manager.</p></div>
+      </div>
+
+      <div class="module hidden" data-module="it_delivery">
+        <h1>IT Delivery</h1>
+        <p class="intro">Client facing ICT service delivery, structured the same way as Managed Security Services delivery.</p>
+        <div class="card"><h2>Client engagement and delivery tracking</h2><p>Structure only. Active ICT service engagements per client, with SLA targets.</p></div>
+        <div class="card"><h2>Delivery to Finance</h2><p>Structure only. Delivery milestones raise an invoicing event.</p></div>
+      </div>
+
+      <div class="module hidden" data-module="internal_it">
+        <h1>Internal IT & Staff Support</h1>
+        <p class="intro">Kept separate from client facing IT Delivery by design. Sits under the Operations Director.</p>
+        <div class="card"><h2>Joiner, mover, leaver events</h2><p>Structure only. Raised by the HR Officer. Covers new starter provisioning, internal role changes, and exit access revocation.</p></div>
+      </div>
+
+      <div class="module hidden" data-module="finance">
+        <h1>Finance</h1>
+        <p class="intro">Invoicing triggered by delivery milestones. Tender and private sector invoicing are tracked with their own payment term expectations.</p>
+        <div class="card"><h2>Invoices</h2><p>Structure only. Raised from delivery milestones.</p></div>
+        <div class="card"><h2>Approval routing</h2><p>Threshold is a placeholder. Invoices and expenses above a configurable value require Managing Director approval.</p></div>
+      </div>
+
+      <div class="module hidden" data-module="operations">
+        <h1>Operations</h1>
+        <p class="intro">Covers project delivery, quality assurance, HR triggered events, and client relationship escalation.</p>
+        <div class="card"><h2>Project delivery</h2><p>Structure only. Delivery execution for won business, owned by the Project Manager.</p></div>
+        <div class="card"><h2>Quality assurance</h2><p>Structure only. SLA and delivery monitoring, and non conformance tracking with an assigned owner, a due date, and a verified close.</p></div>
+        <div class="card"><h2>Client offboarding</h2><p>Structure only. A client relationship is not closed until data return, access revocation, and retention are each confirmed.</p></div>
+        <div class="card"><h2>Service Manager visibility</h2><p>Structure only. Combined view of delivery status and account status.</p></div>
+      </div>
+
+      <div class="module hidden" data-module="settings">
+        <h1>Settings</h1>
+        <p class="intro">System Super User only. Every configurable value referenced elsewhere in the app lives here.</p>
+        <div class="card"><h2>Second reviewer threshold</h2><p>Placeholder, editable.</p></div>
+        <div class="card"><h2>MD approval threshold</h2><p>Placeholder, editable.</p></div>
+        <div class="card"><h2>Contract renewal alert window</h2><p>Default: 60 days, editable.</p></div>
+        <div class="card"><h2>Compliance document register</h2><p>Placeholder list, editable.</p></div>
+      </div>
+
+    </main>
+  </section>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

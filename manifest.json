@@ -1,0 +1,14 @@
+{
+  "name": "Cyberxperts Operations",
+  "short_name": "Cx Ops",
+  "description": "Internal operations platform for Cyberxperts",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "theme_color": "#0b1b33",
+  "background_color": "#ffffff",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
