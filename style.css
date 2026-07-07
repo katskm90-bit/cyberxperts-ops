@@ -445,3 +445,31 @@ button[type="submit"]:hover, .btn-primary:hover { background: var(--navy-900); }
 }
 .activity-row:last-child { border-bottom: none; }
 .activity-row .activity-when { color: var(--ink-500); white-space: nowrap; }
+
+.command-grid {
+  display: grid;
+  grid-template-columns: 1fr 2fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+.command-column {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.command-panel {
+  background: var(--surface-0);
+  border: 1px solid var(--surface-200);
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: var(--shadow-card);
+}
+.command-panel h2 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-700);
+  margin: 0 0 12px;
+}
+@media (max-width: 1000px) {
+  .command-grid { grid-template-columns: 1fr; }
+}
