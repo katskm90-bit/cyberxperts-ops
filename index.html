@@ -7,6 +7,9 @@
   <title>Cyberxperts Operations</title>
   <link rel="icon" type="image/png" href="brand/logo.png" />
   <link rel="manifest" href="manifest.json" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -87,11 +90,73 @@
       <div class="module hidden" data-module="sales">
         <h1>Sales & Bids</h1>
         <p class="intro">Two pipelines run in parallel: tender based public sector opportunities, and direct private sector opportunities. Channel partner deals are tracked separately.</p>
-        <div class="card"><h2>Tender pipeline</h2><p>Structure only. Opportunity intake, Bids Manager and Bids Admin compilation, technical scoping handoff to Cybersecurity, submission, win or loss recording.</p></div>
-        <div class="card"><h2>Private sector pipeline</h2><p>Structure only. Lead intake, qualification, Pre-sales and Solutions Architect scoping, proposal, and contract stages.</p></div>
-        <div class="card"><h2>Channel partner deal registration</h2><p>Structure only. Partner sourced opportunities, tracked independently.</p></div>
-        <div class="card"><h2>Compliance document register</h2><p>Awaiting your document list. Tender eligibility documents with expiry alerts.</p></div>
-        <div class="card"><h2>Contract renewal tracking</h2><p>Default alert window: 60 days. Configurable in Settings.</p></div>
+
+        <div class="section">
+          <div class="section-header"><h2>Tender pipeline</h2></div>
+          <table class="data-table">
+            <thead><tr><th>Client</th><th>Stage</th><th>Value</th></tr></thead>
+            <tbody id="sales-tender-body"><tr><td colspan="3" class="empty">Loading</td></tr></tbody>
+          </table>
+        </div>
+
+        <div class="section">
+          <div class="section-header"><h2>Private sector pipeline</h2></div>
+          <table class="data-table">
+            <thead><tr><th>Client</th><th>Stage</th><th>Value</th></tr></thead>
+            <tbody id="sales-private-body"><tr><td colspan="3" class="empty">Loading</td></tr></tbody>
+          </table>
+        </div>
+
+        <div class="section">
+          <div class="section-header"><h2>Channel partner deal registration</h2></div>
+          <table class="data-table">
+            <thead><tr><th>Client</th><th>Stage</th><th>Value</th></tr></thead>
+            <tbody id="sales-partner-body"><tr><td colspan="3" class="empty">Loading</td></tr></tbody>
+          </table>
+          <form id="add-opportunity-form" class="inline-form">
+            <select id="opp-pipeline" required>
+              <option value="tender">Tender</option>
+              <option value="private">Private sector</option>
+              <option value="partner">Channel partner</option>
+            </select>
+            <input id="opp-client" type="text" placeholder="Client name" required />
+            <input id="opp-value" type="number" step="0.01" placeholder="Value in Rand, optional" />
+            <button type="submit">Add opportunity</button>
+          </form>
+          <p id="add-opportunity-error" class="error"></p>
+        </div>
+
+        <div class="section">
+          <div class="section-header">
+            <h2>Compliance document register</h2>
+            <span class="section-note">Tender eligibility documents, with expiry status</span>
+          </div>
+          <table class="data-table">
+            <thead><tr><th>Document</th><th>Expiry date</th><th>Status</th></tr></thead>
+            <tbody id="compliance-body"><tr><td colspan="3" class="empty">Loading</td></tr></tbody>
+          </table>
+          <form id="add-compliance-form" class="inline-form">
+            <input id="doc-name" type="text" placeholder="Document name" required />
+            <input id="doc-expiry" type="date" required />
+            <button type="submit">Add document</button>
+          </form>
+          <p id="add-compliance-error" class="error"></p>
+        </div>
+
+        <div class="section">
+          <div class="section-header">
+            <h2>Contract renewal tracking</h2>
+            <span class="section-note">Alert window is set in Settings</span>
+          </div>
+          <table class="data-table">
+            <thead><tr><th>Client</th><th>End date</th><th>Status</th></tr></thead>
+            <tbody id="contracts-body"><tr><td colspan="3" class="empty">Loading</td></tr></tbody>
+          </table>
+          <p class="intro" style="margin-top: 10px; margin-bottom: 0;">
+            New contracts are recorded when an opportunity is won. That handoff is not built yet,
+            so contracts currently need to be added directly in Supabase's Table Editor.
+          </p>
+        </div>
       </div>
 
       <div class="module hidden" data-module="cybersecurity">
