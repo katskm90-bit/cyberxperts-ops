@@ -267,6 +267,30 @@ function daysUntil(dateString) {
 // Rule based deal health, not a machine learning score, every input is
 // visible and explainable. Base of 50, adjusted by how recently the
 // opportunity moved and how far along it is.
+function computeRelationshipScore(contacts) {
+  let score = 20;
+  const list = contacts || [];
+  if (list.some((c) => c.role_type === "decision_maker")) score += 25;
+  if (list.some((c) => c.role_type === "champion")) score += 20;
+  score += Math.min(list.length * 5, 20);
+  const recentlyContacted = list.some((c) => {
+    const days = daysUntil(c.last_contacted_at);
+    return days !== null && days >= -30;
+  });
+  if (recentlyContacted) score += 15;
+  score = Math.max(0, Math.min(100, score));
+  let label = "Weak";
+  let cls = "expired";
+  if (score >= 70) {
+    label = "Strong";
+    cls = "valid";
+  } else if (score >= 40) {
+    label = "Developing";
+    cls = "renew-soon";
+  }
+  return { score, label, cls };
+}
+
 function computeDealHealth(o) {
   let score = 50;
   const daysSinceUpdate = Math.round((new Date() - new Date(o.updated_at)) / (1000 * 60 * 60 * 24));
@@ -2152,8 +2176,88 @@ async function loadApprovalsInvoices() {
 // ---- People, resource directory ----
 
 async function loadPeopleModule() {
-  await Promise.all([loadStaffDirectory(), loadSkills(), populateSkillProfileSelect()]);
+  await Promise.all([
+    loadStaffDirectory(),
+    loadSkills(),
+    populateSkillProfileSelect(),
+    loadUtilisation(),
+    populateAllocationSelects()
+  ]);
 }
+
+async function loadUtilisation() {
+  const tbody = document.getElementById("utilisation-body");
+  const { data: staff } = await supabase.from("profiles").select("id, full_name");
+  const { data: allocations, error } = await supabase
+    .from("resource_allocations")
+    .select("profile_id, allocation_percent");
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="3" class="empty">${error.message}</td></tr>`;
+    return;
+  }
+  if (!staff || !staff.length) {
+    tbody.innerHTML = `<tr><td colspan="3" class="empty">No staff records visible.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = staff
+    .map((p) => {
+      const total = (allocations || [])
+        .filter((a) => a.profile_id === p.id)
+        .reduce((sum, a) => sum + Number(a.allocation_percent || 0), 0);
+      let status = "On bench";
+      let cls = "no-date";
+      if (total > 100) {
+        status = "Over allocated";
+        cls = "expired";
+      } else if (total >= 60) {
+        status = "Fully allocated";
+        cls = "valid";
+      } else if (total > 0) {
+        status = "Partially allocated";
+        cls = "renew-soon";
+      }
+      return `<tr><td>${p.full_name}</td><td>${total}%</td><td><span class="badge badge-${cls}">${status}</span></td></tr>`;
+    })
+    .join("");
+}
+
+async function populateAllocationSelects() {
+  const profileSelect = document.getElementById("allocation-profile");
+  const projectSelect = document.getElementById("allocation-project");
+
+  const { data: staff } = await supabase.from("profiles").select("id, full_name").order("full_name");
+  profileSelect.innerHTML = (staff || []).map((p) => `<option value="${p.id}">${p.full_name}</option>`).join("");
+
+  const { data: projectRows } = await supabase.from("projects").select("id, title").order("created_at", { ascending: false });
+  projectSelect.innerHTML = (projectRows || [])
+    .map((p) => `<option value="${p.id}">${p.title ?? "Untitled project"}</option>`)
+    .join("");
+}
+
+document.getElementById("add-allocation-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const profileId = document.getElementById("allocation-profile").value;
+  const projectId = document.getElementById("allocation-project").value;
+  const percent = Number(document.getElementById("allocation-percent").value);
+  const errorEl = document.getElementById("add-allocation-error");
+  errorEl.textContent = "";
+
+  const { error } = await supabase.from("resource_allocations").insert({
+    profile_id: profileId,
+    project_id: projectId,
+    allocation_percent: percent
+  });
+
+  if (error) {
+    errorEl.textContent = error.message;
+    return;
+  }
+  form.reset();
+  await loadUtilisation();
+});
 
 async function loadStaffDirectory() {
   const tbody = document.getElementById("staff-directory-body");
@@ -2405,6 +2509,12 @@ async function loadClientWorkspace(clientId) {
     .eq("client_id", clientId)
     .order("due_date", { ascending: true, nullsFirst: false });
 
+  const { data: contacts } = await supabase
+    .from("contacts")
+    .select("id, full_name, role_type, email, phone, last_contacted_at")
+    .eq("client_id", clientId)
+    .order("created_at", { ascending: false });
+
   const oppIds = (opportunities || []).map((o) => o.id);
   const { data: stageHistory } = oppIds.length
     ? await supabase.from("opportunity_stage_history").select("stage, changed_at").in("opportunity_id", oppIds)
@@ -2418,10 +2528,14 @@ async function loadClientWorkspace(clientId) {
   (clientTasks || []).forEach((t) => timelineItems.push({ type: "Task", text: t.title, at: t.created_at }));
   (stageHistory || []).forEach((s) => timelineItems.push({ type: "Stage change", text: "Moved to " + s.stage, at: s.changed_at }));
   timelineItems.sort((a, b) => new Date(b.at) - new Date(a.at));
+  const relationshipScore = computeRelationshipScore(contacts);
 
   container.innerHTML = `
     <h1>${client.name}</h1>
-    <p class="intro">${client.sector ?? "No sector recorded"}</p>
+    <p class="intro">
+      ${client.sector ?? "No sector recorded"}
+      <span class="badge badge-${relationshipScore.cls}" style="margin-left: 8px;" title="Score ${relationshipScore.score} of 100">Relationship: ${relationshipScore.label}</span>
+    </p>
 
     <div class="section">
       <div class="section-header"><h2>Activity timeline</h2></div>
@@ -2440,6 +2554,40 @@ async function loadClientWorkspace(clientId) {
           }
         </tbody>
       </table>
+    </div>
+
+    <div class="section">
+      <div class="section-header"><h2>Contacts</h2></div>
+      <table class="data-table">
+        <thead><tr><th>Name</th><th>Role</th><th>Email</th><th>Last contacted</th></tr></thead>
+        <tbody>
+          ${
+            (contacts || []).length
+              ? contacts
+                  .map(
+                    (c) =>
+                      `<tr><td>${c.full_name}</td><td>${c.role_type.replace("_", " ")}</td><td>${c.email ?? "—"}</td><td>${c.last_contacted_at ?? "—"}</td></tr>`
+                  )
+                  .join("")
+              : `<tr><td colspan="4" class="empty">None recorded yet.</td></tr>`
+          }
+        </tbody>
+      </table>
+      <form id="add-contact-form" class="inline-form">
+        <input id="contact-name" type="text" placeholder="Full name" required />
+        <select id="contact-role">
+          <option value="contact">Contact</option>
+          <option value="decision_maker">Decision maker</option>
+          <option value="champion">Champion</option>
+          <option value="influencer">Influencer</option>
+          <option value="procurement">Procurement</option>
+          <option value="technical">Technical</option>
+        </select>
+        <input id="contact-email" type="text" placeholder="Email, optional" />
+        <input id="contact-last-contacted" type="date" placeholder="Last contacted" />
+        <button type="submit">Add contact</button>
+      </form>
+      <p id="add-contact-error" class="error"></p>
     </div>
 
     <div class="section">
@@ -2686,6 +2834,30 @@ async function loadClientWorkspace(clientId) {
       mediaRecorder.stream.getTracks().forEach((track) => track.stop());
       recordBtn.textContent = "Record voice note";
     }
+  });
+
+  document.getElementById("add-contact-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fullName = document.getElementById("contact-name").value.trim();
+    const roleType = document.getElementById("contact-role").value;
+    const email = document.getElementById("contact-email").value.trim() || null;
+    const lastContacted = document.getElementById("contact-last-contacted").value || null;
+    const errorEl = document.getElementById("add-contact-error");
+    errorEl.textContent = "";
+
+    const { error } = await supabase.from("contacts").insert({
+      client_id: clientId,
+      full_name: fullName,
+      role_type: roleType,
+      email,
+      last_contacted_at: lastContacted
+    });
+
+    if (error) {
+      errorEl.textContent = error.message;
+      return;
+    }
+    await loadClientWorkspace(clientId);
   });
 
   document.getElementById("add-note-form").addEventListener("submit", async (e) => {
