@@ -86,45 +86,78 @@
 
       <div class="module" data-module="overview">
         <h1>Home</h1>
-        <p class="intro">Company pulse, based on your role and department.</p>
+        <p class="intro">Executive summary, current as of this session.</p>
 
         <div id="metric-row" class="metric-row"></div>
 
-        <div class="command-grid">
-          <div class="command-column">
-            <div class="command-panel">
-              <h2>My priorities</h2>
-              <div id="needs-attention"><p class="intro">Loading</p></div>
-            </div>
-          </div>
+        <div class="section" id="section-insights">
+          <div class="section-header"><h2>Smart insights</h2></div>
+          <div id="smart-insights"></div>
+        </div>
 
-          <div class="command-column command-column-wide">
-            <div class="chart-row">
-              <div class="chart-card">
-                <h2>Pipeline by stage</h2>
-                <canvas id="chart-pipeline"></canvas>
-              </div>
-              <div class="chart-card">
-                <h2>Department status</h2>
-                <canvas id="chart-department"></canvas>
-              </div>
-            </div>
-            <div class="command-panel">
-              <h2>Business timeline</h2>
-              <div id="business-timeline" class="timeline-horizontal"></div>
-            </div>
-            <div class="command-panel">
-              <h2>Company activity</h2>
-              <div id="activity-stream"></div>
-            </div>
-          </div>
+        <div class="section" id="section-action-centre">
+          <div class="section-header"><h2>What needs your action right now</h2></div>
+          <div id="needs-attention"><p class="intro">Loading</p></div>
+        </div>
 
-          <div class="command-column">
-            <div class="command-panel">
-              <h2>Department health</h2>
-              <div id="home-cards"></div>
+        <div class="section" id="section-revenue">
+          <div class="section-header"><h2>Is revenue on track</h2></div>
+          <div class="chart-row">
+            <div class="chart-card">
+              <h2>Won value by month</h2>
+              <canvas id="chart-monthly-revenue"></canvas>
+            </div>
+            <div class="chart-card">
+              <h2>Pipeline by stage</h2>
+              <canvas id="chart-pipeline"></canvas>
             </div>
           </div>
+          <div id="revenue-stats" class="metric-row"></div>
+          <table class="data-table" style="margin-top: 12px;">
+            <thead><tr><th>Owner</th><th>Won value</th></tr></thead>
+            <tbody id="leaderboard-body"><tr><td colspan="2" class="empty">Loading</td></tr></tbody>
+          </table>
+        </div>
+
+        <div class="section" id="section-clients">
+          <div class="section-header"><h2>Which clients need attention</h2></div>
+          <table class="data-table">
+            <thead><tr><th>Client</th><th>Reason</th></tr></thead>
+            <tbody id="clients-attention-body"><tr><td colspan="2" class="empty">Loading</td></tr></tbody>
+          </table>
+        </div>
+
+        <div class="section" id="section-operations">
+          <div class="section-header"><h2>Is delivery on track</h2></div>
+          <div id="operations-stats" class="metric-row"></div>
+          <table class="data-table" style="margin-top: 12px;">
+            <thead><tr><th>Project</th><th>Status</th></tr></thead>
+            <tbody id="projects-at-risk-body"><tr><td colspan="2" class="empty">Loading</td></tr></tbody>
+          </table>
+        </div>
+
+        <div class="section" id="section-finance">
+          <div class="section-header"><h2>What is outstanding financially</h2></div>
+          <div id="finance-stats" class="metric-row"></div>
+        </div>
+
+        <div class="section" id="section-compliance">
+          <div class="section-header"><h2>What compliance needs attention</h2></div>
+          <table class="data-table">
+            <thead><tr><th>Item</th><th>Type</th><th>Status</th></tr></thead>
+            <tbody id="compliance-workspace-body"><tr><td colspan="3" class="empty">Loading</td></tr></tbody>
+          </table>
+        </div>
+
+        <div class="section" id="section-people">
+          <div class="section-header"><h2>Is the team stretched or has capacity</h2></div>
+          <div id="people-stats" class="metric-row"></div>
+        </div>
+
+        <div class="section" id="section-activity">
+          <div class="section-header"><h2>What has just happened across the company</h2></div>
+          <div id="activity-filters" class="inline-form" style="margin-bottom: 10px;"></div>
+          <div id="activity-stream"></div>
         </div>
       </div>
 
@@ -378,6 +411,7 @@
           <form id="add-invoice-form" class="inline-form">
             <input id="invoice-description" type="text" placeholder="What this invoice is for" required />
             <input id="invoice-amount" type="number" step="0.01" placeholder="Amount in Rand" required />
+            <input id="invoice-due" type="date" placeholder="Due date" />
             <button type="submit">Add invoice</button>
           </form>
           <p id="add-invoice-error" class="error"></p>
