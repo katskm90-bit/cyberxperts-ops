@@ -38,7 +38,11 @@ function renderNav(profile) {
   const nav = document.getElementById("nav-links");
   nav.innerHTML = "";
 
-  const items = [{ key: "overview", label: "Overview" }];
+  const items = [
+    { key: "overview", label: "Home" },
+    { key: "my_work", label: "My Work" },
+    { key: "notifications", label: "Notifications" }
+  ];
 
   Object.entries(DEPARTMENTS).forEach(([key, label]) => {
     const canSee = profile.role_tier === "system" || profile.department === key;
@@ -69,6 +73,8 @@ function renderNav(profile) {
     (profile.role_tier === "system" ? " · System Super User" : "");
 
   showModule("overview");
+  loadHomeModule();
+  updateNotificationBadge();
 }
 
 // ---- Auth state evaluation ----
@@ -404,7 +410,10 @@ async function loadSalesModule() {
     loadPipeline("private", "sales-private-body"),
     loadPipeline("partner", "sales-partner-body"),
     loadComplianceDocuments(),
-    loadContracts()
+    loadContracts(),
+    loadLeads(),
+    loadCampaigns(),
+    loadEvents()
   ]);
 }
 
@@ -1129,6 +1138,9 @@ document.getElementById("settings-form").addEventListener("submit", async (e) =>
 // ---- Module loaders, keyed by nav item ----
 
 const MODULE_LOADERS = {
+  overview: loadHomeModule,
+  my_work: loadTasksModule,
+  notifications: loadNotificationsModule,
   sales: loadSalesModule,
   cybersecurity: loadCybersecurityModule,
   it_delivery: loadITDeliveryModule,
@@ -1137,6 +1149,489 @@ const MODULE_LOADERS = {
   operations: loadOperationsModule,
   settings: loadSettingsModule
 };
+
+// ---- Home dashboard ----
+
+function statCard(label, value) {
+  const div = document.createElement("div");
+  div.className = "card";
+  div.innerHTML = `<h2>${label}</h2><p style="font-size: 20px; font-weight: 600; color: var(--ink-900);">${value}</p>`;
+  return div;
+}
+
+async function loadHomeModule() {
+  const container = document.getElementById("home-cards");
+  container.innerHTML = "";
+  const dept = currentProfile.department;
+  const isSystem = currentProfile.role_tier === "system";
+
+  if (isSystem || dept === "sales") {
+    const { data: opps } = await supabase.from("opportunities").select("value, stage");
+    const openOpps = (opps || []).filter((o) => o.stage !== "won" && o.stage !== "lost");
+    const openValue = openOpps.reduce((sum, o) => sum + (Number(o.value) || 0), 0);
+    container.appendChild(statCard("Open opportunities", openOpps.length));
+    container.appendChild(statCard("Open pipeline value", formatRand(openValue)));
+
+    const { data: docs } = await supabase.from("compliance_documents").select("expiry_date");
+    const expiringSoon = (docs || []).filter((d) => {
+      const days = daysUntil(d.expiry_date);
+      return days !== null && days <= 30;
+    }).length;
+    container.appendChild(statCard("Compliance documents expiring soon", expiringSoon));
+  }
+
+  if (isSystem || dept === "cybersecurity") {
+    const { data: props } = await supabase.from("proposals").select("signed_off_by");
+    const awaiting = (props || []).filter((p) => !p.signed_off_by).length;
+    container.appendChild(statCard("Proposals awaiting scoping", awaiting));
+  }
+
+  if (isSystem || dept === "it_delivery") {
+    const { data: tickets } = await supabase
+      .from("delivery_tickets")
+      .select("status")
+      .eq("department", "it_delivery");
+    const open = (tickets || []).filter((t) => t.status !== "resolved").length;
+    container.appendChild(statCard("Open IT Delivery engagements", open));
+  }
+
+  if (isSystem || dept === "finance") {
+    const { data: invs } = await supabase.from("invoices").select("amount, approval_status");
+    const pending = (invs || []).filter((i) => i.approval_status !== "approved");
+    const pendingValue = pending.reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
+    container.appendChild(statCard("Invoices pending approval", pending.length));
+    container.appendChild(statCard("Value pending approval", formatRand(pendingValue)));
+  }
+
+  if (isSystem || dept === "operations") {
+    const { data: ncs } = await supabase.from("non_conformances").select("closed_at");
+    const open = (ncs || []).filter((n) => !n.closed_at).length;
+    container.appendChild(statCard("Open quality findings", open));
+
+    const { data: projs } = await supabase.from("projects").select("status");
+    const active = (projs || []).filter((p) => p.status === "active").length;
+    container.appendChild(statCard("Active projects", active));
+  }
+
+  if (isSystem || dept === "internal_it") {
+    const { data: evs } = await supabase.from("staff_events").select("provisioning_status");
+    const pending = (evs || []).filter((e) => e.provisioning_status !== "complete").length;
+    container.appendChild(statCard("Staff events pending action", pending));
+  }
+
+  if (!container.children.length) {
+    container.innerHTML = `<p class="intro">Nothing to show yet for your department.</p>`;
+  }
+}
+
+// ---- Tasks, My Work ----
+
+async function loadTasksModule() {
+  const tbody = document.getElementById("tasks-body");
+  const { data, error } = await supabase
+    .from("tasks")
+    .select("id, title, due_date, status")
+    .order("due_date", { ascending: true, nullsFirst: false });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty">${error.message}</td></tr>`;
+    return;
+  }
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty">No tasks yet.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = "";
+  data.forEach((t) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${t.title}</td>
+      <td>${t.due_date ?? "—"}</td>
+      <td>${t.status}</td>
+      <td><button type="button" class="btn-primary btn-small" data-id="${t.id}" data-status="${t.status}">${t.status === "open" ? "Mark done" : "Reopen"}</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll("button[data-id]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const newStatus = btn.dataset.status === "open" ? "done" : "open";
+      const { error: updateError } = await supabase
+        .from("tasks")
+        .update({ status: newStatus })
+        .eq("id", btn.dataset.id);
+      if (updateError) alert("Could not update this task. " + updateError.message);
+      await loadTasksModule();
+    });
+  });
+}
+
+document.getElementById("add-task-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const title = document.getElementById("task-title").value.trim();
+  const due = document.getElementById("task-due").value || null;
+  const note = document.getElementById("task-note").value.trim() || null;
+  const errorEl = document.getElementById("add-task-error");
+  errorEl.textContent = "";
+
+  const { error } = await supabase.from("tasks").insert({
+    title,
+    due_date: due,
+    note,
+    assigned_to: currentProfile.id,
+    created_by: currentProfile.id
+  });
+
+  if (error) {
+    errorEl.textContent = error.message;
+    return;
+  }
+  form.reset();
+  await loadTasksModule();
+});
+
+// ---- Notifications ----
+
+async function updateNotificationBadge() {
+  const { data } = await supabase.from("notifications").select("id").eq("read", false);
+  const link = document.querySelector('.nav-link[data-module="notifications"]');
+  if (!link) return;
+  const existingBadge = link.querySelector(".nav-badge");
+  if (existingBadge) existingBadge.remove();
+  if (data && data.length) {
+    const badge = document.createElement("span");
+    badge.className = "nav-badge";
+    badge.textContent = data.length;
+    link.appendChild(badge);
+  }
+}
+
+async function loadNotificationsModule() {
+  const tbody = document.getElementById("notifications-body");
+  const { data, error } = await supabase
+    .from("notifications")
+    .select("id, message, read, created_at")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="3" class="empty">${error.message}</td></tr>`;
+    return;
+  }
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="3" class="empty">Nothing here yet.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = "";
+  data.forEach((n) => {
+    const tr = document.createElement("tr");
+    tr.style.opacity = n.read ? "0.55" : "1";
+    tr.innerHTML = `
+      <td>${n.message}</td>
+      <td>${new Date(n.created_at).toLocaleDateString("en-ZA")}</td>
+      <td>${n.read ? "" : `<button type="button" class="btn-primary btn-small" data-id="${n.id}">Mark read</button>`}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll("button[data-id]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const { error: updateError } = await supabase
+        .from("notifications")
+        .update({ read: true })
+        .eq("id", btn.dataset.id);
+      if (updateError) alert("Could not update this notification. " + updateError.message);
+      await loadNotificationsModule();
+      await updateNotificationBadge();
+    });
+  });
+}
+
+// ---- Leads ----
+
+async function loadLeads() {
+  const tbody = document.getElementById("leads-body");
+  const { data, error } = await supabase
+    .from("leads")
+    .select("id, name, source, status")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty">${error.message}</td></tr>`;
+    return;
+  }
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty">No leads logged yet.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = "";
+  data.forEach((lead) => {
+    const tr = document.createElement("tr");
+    const convertButton =
+      lead.status === "converted"
+        ? ""
+        : `<button type="button" class="btn-primary btn-small" data-id="${lead.id}" data-name="${lead.name}">Convert</button>`;
+    tr.innerHTML = `
+      <td>${lead.name}</td>
+      <td>${lead.source ?? "—"}</td>
+      <td>${lead.status}</td>
+      <td>${convertButton}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll("button[data-id]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const leadId = btn.dataset.id;
+      const leadName = btn.dataset.name;
+
+      const { data: existingClient } = await supabase
+        .from("clients")
+        .select("id")
+        .eq("name", leadName)
+        .maybeSingle();
+
+      let clientId = existingClient ? existingClient.id : null;
+      if (!clientId) {
+        const { data: newClient, error: clientError } = await supabase
+          .from("clients")
+          .insert({ name: leadName })
+          .select("id")
+          .single();
+        if (clientError) {
+          alert("Could not create the client record. " + clientError.message);
+          return;
+        }
+        clientId = newClient.id;
+      }
+
+      const { error: oppError } = await supabase.from("opportunities").insert({
+        client_id: clientId,
+        pipeline_type: "private",
+        stage: "lead",
+        owner_id: currentProfile.id
+      });
+      if (oppError) {
+        alert("Could not create the opportunity. " + oppError.message);
+        return;
+      }
+
+      await supabase.from("leads").update({ status: "converted" }).eq("id", leadId);
+      await loadLeads();
+      await loadPipeline("private", "sales-private-body");
+    });
+  });
+}
+
+document.getElementById("add-lead-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const name = document.getElementById("lead-name").value.trim();
+  const source = document.getElementById("lead-source").value.trim() || null;
+  const rawValue = document.getElementById("lead-value").value;
+  const value = rawValue === "" ? null : Number(rawValue);
+  const errorEl = document.getElementById("add-lead-error");
+  errorEl.textContent = "";
+
+  const { error } = await supabase.from("leads").insert({
+    name,
+    source,
+    value,
+    owner_id: currentProfile.id
+  });
+
+  if (error) {
+    errorEl.textContent = error.message;
+    return;
+  }
+  form.reset();
+  await loadLeads();
+});
+
+// ---- Campaigns ----
+
+async function loadCampaigns() {
+  const tbody = document.getElementById("campaigns-body");
+  const { data, error } = await supabase
+    .from("campaigns")
+    .select("id, name, channel, budget, status")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty">${error.message}</td></tr>`;
+    return;
+  }
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty">No campaigns logged yet.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = "";
+  data.forEach((c) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${c.name}</td>
+      <td>${c.channel ?? "—"}</td>
+      <td>${formatRand(c.budget)}</td>
+      <td>${c.status}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById("add-campaign-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const name = document.getElementById("campaign-name").value.trim();
+  const channel = document.getElementById("campaign-channel").value.trim() || null;
+  const rawBudget = document.getElementById("campaign-budget").value;
+  const budget = rawBudget === "" ? null : Number(rawBudget);
+  const errorEl = document.getElementById("add-campaign-error");
+  errorEl.textContent = "";
+
+  const { error } = await supabase.from("campaigns").insert({ name, channel, budget });
+
+  if (error) {
+    errorEl.textContent = error.message;
+    return;
+  }
+  form.reset();
+  await loadCampaigns();
+});
+
+// ---- Events ----
+
+async function loadEvents() {
+  const tbody = document.getElementById("events-body");
+  const { data, error } = await supabase
+    .from("events")
+    .select("id, name, event_type, event_date")
+    .order("event_date", { ascending: true });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="3" class="empty">${error.message}</td></tr>`;
+    return;
+  }
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="3" class="empty">No events logged yet.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = "";
+  data.forEach((ev) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${ev.name}</td>
+      <td>${ev.event_type ?? "—"}</td>
+      <td>${ev.event_date ?? "—"}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById("add-event-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const name = document.getElementById("event-name").value.trim();
+  const eventType = document.getElementById("event-type").value.trim() || null;
+  const eventDate = document.getElementById("event-date").value || null;
+  const errorEl = document.getElementById("add-event-error");
+  errorEl.textContent = "";
+
+  const { error } = await supabase.from("events").insert({
+    name,
+    event_type: eventType,
+    event_date: eventDate
+  });
+
+  if (error) {
+    errorEl.textContent = error.message;
+    return;
+  }
+  form.reset();
+  await loadEvents();
+});
+
+// ---- Global search ----
+
+let searchTimer = null;
+const searchInput = document.getElementById("global-search");
+const searchResults = document.getElementById("search-results");
+
+searchInput.addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  const query = searchInput.value.trim();
+  if (query.length < 2) {
+    searchResults.classList.add("hidden");
+    return;
+  }
+  searchTimer = setTimeout(() => runSearch(query), 300);
+});
+
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".sidebar-search")) {
+    searchResults.classList.add("hidden");
+  }
+});
+
+async function runSearch(query) {
+  const results = [];
+
+  const { data: clientMatches } = await supabase
+    .from("clients")
+    .select("id, name")
+    .ilike("name", `%${query}%`)
+    .limit(5);
+  (clientMatches || []).forEach((c) => results.push({ type: "Client", label: c.name, module: "sales" }));
+
+  const { data: projectMatches } = await supabase
+    .from("projects")
+    .select("id, title")
+    .ilike("title", `%${query}%`)
+    .limit(5);
+  (projectMatches || []).forEach((p) =>
+    results.push({ type: "Project", label: p.title ?? "Untitled project", module: "operations" })
+  );
+
+  const { data: invoiceMatches } = await supabase
+    .from("invoices")
+    .select("id, description")
+    .ilike("description", `%${query}%`)
+    .limit(5);
+  (invoiceMatches || []).forEach((i) =>
+    results.push({ type: "Invoice", label: i.description ?? "Untitled invoice", module: "finance" })
+  );
+
+  if (!results.length) {
+    searchResults.innerHTML = `<div class="search-result-item">No matches</div>`;
+    searchResults.classList.remove("hidden");
+    return;
+  }
+
+  searchResults.innerHTML = results
+    .map(
+      (r) =>
+        `<div class="search-result-item" data-module="${r.module}"><span class="result-type">${r.type}</span>${r.label}</div>`
+    )
+    .join("");
+  searchResults.classList.remove("hidden");
+
+  searchResults.querySelectorAll(".search-result-item[data-module]").forEach((item) => {
+    item.addEventListener("click", () => {
+      const moduleKey = item.dataset.module;
+      showModule(moduleKey);
+      if (MODULE_LOADERS[moduleKey]) MODULE_LOADERS[moduleKey]();
+      document.querySelectorAll(".nav-link").forEach((el) => {
+        el.classList.toggle("active", el.dataset.module === moduleKey);
+      });
+      searchResults.classList.add("hidden");
+      searchInput.value = "";
+    });
+  });
+}
 
 // ---- Offline support ----
 if ("serviceWorker" in navigator) {
