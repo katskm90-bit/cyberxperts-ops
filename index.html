@@ -90,35 +90,41 @@
 
         <div id="metric-row" class="metric-row"></div>
 
-        <div class="section">
-          <div class="section-header"><h2>Needs your action</h2></div>
-          <div id="needs-attention"><p class="intro">Loading</p></div>
-        </div>
-
-        <div class="chart-row">
-          <div class="chart-card">
-            <h2>Pipeline by stage</h2>
-            <canvas id="chart-pipeline"></canvas>
+        <div class="command-grid">
+          <div class="command-column">
+            <div class="command-panel">
+              <h2>My priorities</h2>
+              <div id="needs-attention"><p class="intro">Loading</p></div>
+            </div>
           </div>
-          <div class="chart-card">
-            <h2>Department status</h2>
-            <canvas id="chart-department"></canvas>
+
+          <div class="command-column command-column-wide">
+            <div class="chart-row">
+              <div class="chart-card">
+                <h2>Pipeline by stage</h2>
+                <canvas id="chart-pipeline"></canvas>
+              </div>
+              <div class="chart-card">
+                <h2>Department status</h2>
+                <canvas id="chart-department"></canvas>
+              </div>
+            </div>
+            <div class="command-panel">
+              <h2>Business timeline</h2>
+              <div id="business-timeline" class="timeline-horizontal"></div>
+            </div>
+            <div class="command-panel">
+              <h2>Company activity</h2>
+              <div id="activity-stream"></div>
+            </div>
           </div>
-        </div>
 
-        <div class="section">
-          <div class="section-header"><h2>Business timeline</h2></div>
-          <div id="business-timeline" class="timeline-horizontal"></div>
-        </div>
-
-        <div class="section">
-          <div class="section-header"><h2>Department health</h2></div>
-          <div id="home-cards" class="section"></div>
-        </div>
-
-        <div class="section">
-          <div class="section-header"><h2>Recent activity</h2></div>
-          <div id="activity-stream"></div>
+          <div class="command-column">
+            <div class="command-panel">
+              <h2>Department health</h2>
+              <div id="home-cards"></div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -504,6 +510,21 @@
             <button type="submit">Add</button>
           </form>
           <p id="add-skill-error" class="error"></p>
+        </div>
+
+        <div class="section">
+          <div class="section-header"><h2>Resource utilisation</h2></div>
+          <table class="data-table">
+            <thead><tr><th>Staff member</th><th>Total allocation</th><th>Status</th></tr></thead>
+            <tbody id="utilisation-body"><tr><td colspan="3" class="empty">Loading</td></tr></tbody>
+          </table>
+          <form id="add-allocation-form" class="inline-form">
+            <select id="allocation-profile" required></select>
+            <select id="allocation-project" required></select>
+            <input id="allocation-percent" type="number" min="0" max="100" placeholder="Allocation percent" required />
+            <button type="submit">Add allocation</button>
+          </form>
+          <p id="add-allocation-error" class="error"></p>
         </div>
       </div>
 
