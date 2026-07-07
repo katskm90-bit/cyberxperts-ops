@@ -1365,8 +1365,174 @@ async function loadNeedsAttention() {
     .join("")}</ul>`;
 }
 
+async function loadMetricRow() {
+  const row = document.getElementById("metric-row");
+  const { data: opps } = await supabase.from("opportunities").select("value, stage");
+  const openOpps = (opps || []).filter((o) => o.stage !== "won" && o.stage !== "lost");
+  const openValue = openOpps.reduce((sum, o) => sum + (Number(o.value) || 0), 0);
+  const won = (opps || []).filter((o) => o.stage === "won");
+  const lost = (opps || []).filter((o) => o.stage === "lost");
+  const closed = won.length + lost.length;
+  const winRate = closed ? Math.round((won.length / closed) * 100) : 0;
+
+  const alertDays = await getContractRenewalAlertDays();
+  const { data: contractRows } = await supabase.from("contracts").select("end_date");
+  const needingRenewal = (contractRows || []).filter((c) => {
+    const days = daysUntil(c.end_date);
+    return days !== null && days >= 0 && days <= alertDays;
+  }).length;
+
+  const tiles = [
+    { label: "Open pipeline value", value: formatRand(openValue) },
+    { label: "Win rate", value: closed ? winRate + "%" : "No closed deals yet" },
+    { label: "Open opportunities", value: openOpps.length },
+    { label: "Contracts needing renewal", value: needingRenewal }
+  ];
+
+  row.innerHTML = tiles
+    .map(
+      (t) =>
+        `<div class="metric-tile"><div class="metric-label">${t.label}</div><div class="metric-value">${t.value}</div></div>`
+    )
+    .join("");
+}
+
+let pipelineChart = null;
+let departmentChart = null;
+
+async function loadDashboardCharts() {
+  const { data: opps } = await supabase.from("opportunities").select("stage");
+  const stageCounts = STAGE_OPTIONS.map(
+    (stage) => (opps || []).filter((o) => o.stage === stage).length
+  );
+
+  const pipelineCanvas = document.getElementById("chart-pipeline");
+  if (pipelineChart) pipelineChart.destroy();
+  pipelineChart = new Chart(pipelineCanvas, {
+    type: "bar",
+    data: {
+      labels: STAGE_OPTIONS,
+      datasets: [{ label: "Opportunities", data: stageCounts, backgroundColor: "#2b4d86" }]
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+    }
+  });
+
+  const dept = currentProfile.department;
+  const isSystem = currentProfile.role_tier === "system";
+  let deptLabels = [];
+  let deptCounts = [];
+  let deptColors = [];
+
+  if (isSystem || dept === "finance") {
+    const { data: invs } = await supabase.from("invoices").select("approval_status");
+    deptLabels = ["Approved", "Pending"];
+    deptCounts = [
+      (invs || []).filter((i) => i.approval_status === "approved").length,
+      (invs || []).filter((i) => i.approval_status !== "approved").length
+    ];
+    deptColors = ["#1f7a4d", "#b8790a"];
+  } else if (isSystem || dept === "it_delivery") {
+    const { data: tickets } = await supabase.from("delivery_tickets").select("status").eq("department", "it_delivery");
+    deptLabels = TICKET_STATUS_OPTIONS;
+    deptCounts = TICKET_STATUS_OPTIONS.map((s) => (tickets || []).filter((t) => t.status === s).length);
+    deptColors = ["#c02a2a", "#b8790a", "#1f7a4d"];
+  } else {
+    const { data: props } = await supabase.from("proposals").select("signed_off_by");
+    deptLabels = ["Signed off", "Awaiting"];
+    deptCounts = [
+      (props || []).filter((p) => p.signed_off_by).length,
+      (props || []).filter((p) => !p.signed_off_by).length
+    ];
+    deptColors = ["#1f7a4d", "#b8790a"];
+  }
+
+  const deptCanvas = document.getElementById("chart-department");
+  if (departmentChart) departmentChart.destroy();
+  departmentChart = new Chart(deptCanvas, {
+    type: "doughnut",
+    data: { labels: deptLabels, datasets: [{ data: deptCounts, backgroundColor: deptColors }] },
+    options: { plugins: { legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } } } }
+  });
+}
+
+async function loadBusinessTimeline() {
+  const container = document.getElementById("business-timeline");
+  const events = [];
+
+  const { data: wonHistory } = await supabase
+    .from("opportunity_stage_history")
+    .select("changed_at, opportunities(clients(name))")
+    .eq("stage", "won")
+    .order("changed_at", { ascending: false })
+    .limit(10);
+  (wonHistory || []).forEach((h) =>
+    events.push({ at: h.changed_at, text: "Won: " + (h.opportunities?.clients?.name ?? "a client") })
+  );
+
+  const { data: projectRows } = await supabase
+    .from("projects")
+    .select("title, created_at")
+    .order("created_at", { ascending: false })
+    .limit(10);
+  (projectRows || []).forEach((p) => events.push({ at: p.created_at, text: "Project started: " + (p.title ?? "Untitled") }));
+
+  const { data: contractRows } = await supabase
+    .from("contracts")
+    .select("end_date, clients(name)")
+    .order("end_date", { ascending: true })
+    .limit(10);
+  (contractRows || []).forEach((c) => {
+    if (c.end_date) events.push({ at: c.end_date, text: "Contract renewal: " + (c.clients?.name ?? "a client") });
+  });
+
+  events.sort((a, b) => new Date(b.at) - new Date(a.at));
+
+  if (!events.length) {
+    container.innerHTML = `<p class="intro">Nothing recorded yet.</p>`;
+    return;
+  }
+
+  container.innerHTML = events
+    .slice(0, 12)
+    .map(
+      (e) =>
+        `<div class="timeline-item"><div class="timeline-date">${new Date(e.at).toLocaleDateString("en-ZA")}</div><div class="timeline-text">${e.text}</div></div>`
+    )
+    .join("");
+}
+
+async function loadActivityStream() {
+  const container = document.getElementById("activity-stream");
+  const { data, error } = await supabase
+    .from("notifications")
+    .select("message, created_at")
+    .order("created_at", { ascending: false })
+    .limit(15);
+
+  if (error || !data || !data.length) {
+    container.innerHTML = `<div class="activity-row"><span>Nothing recorded yet.</span></div>`;
+    return;
+  }
+
+  container.innerHTML = data
+    .map(
+      (n) =>
+        `<div class="activity-row"><span>${n.message}</span><span class="activity-when">${new Date(n.created_at).toLocaleString("en-ZA")}</span></div>`
+    )
+    .join("");
+}
+
 async function loadHomeModule() {
-  await loadNeedsAttention();
+  await Promise.all([
+    loadNeedsAttention(),
+    loadMetricRow(),
+    loadDashboardCharts(),
+    loadBusinessTimeline(),
+    loadActivityStream()
+  ]);
   const container = document.getElementById("home-cards");
   container.innerHTML = "";
   const dept = currentProfile.department;
