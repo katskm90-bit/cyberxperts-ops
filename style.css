@@ -1,7 +1,10 @@
 :root {
   --navy-950: #0b1b33;
   --navy-900: #122446;
+  --navy-700: #2b4d86;
   --signal-600: #c02a2a;
+  --amber-600: #b8790a;
+  --green-700: #1f7a4d;
   --surface-0: #ffffff;
   --surface-50: #f6f7f9;
   --surface-100: #eceef2;
@@ -9,21 +12,21 @@
   --ink-900: #12161c;
   --ink-700: #3a4453;
   --ink-500: #657182;
+  --shadow-card: 0 1px 2px rgba(18, 22, 28, 0.04), 0 1px 6px rgba(18, 22, 28, 0.04);
 }
 
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
-  font-family: -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
+  font-family: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
   background: var(--surface-50);
   color: var(--ink-900);
+  -webkit-font-smoothing: antialiased;
 }
 
 .hidden { display: none !important; }
 
-/* ---- Auth screens ---- */
-.screen.hidden { display: none; }
 #screen-login, #screen-mfa-enroll, #screen-mfa-challenge {
   min-height: 100vh;
   display: flex;
@@ -39,11 +42,11 @@ body {
   border: 1px solid var(--surface-200);
   border-radius: 10px;
   padding: 32px;
+  box-shadow: var(--shadow-card);
 }
 
 .auth-logo { height: 40px; display: block; margin: 0 auto 24px; }
-
-.auth-box h1 { font-size: 18px; margin: 0 0 4px; }
+.auth-box h1 { font-size: 18px; margin: 0 0 4px; letter-spacing: -0.01em; }
 .muted { color: var(--ink-500); font-size: 14px; margin: 0 0 20px; }
 .hint { color: var(--ink-500); font-size: 12px; text-align: center; margin-top: 20px; }
 .small { font-size: 12px; }
@@ -51,35 +54,35 @@ body {
 .auth-box form { display: flex; flex-direction: column; gap: 12px; }
 .auth-box label { font-size: 13px; color: var(--ink-700); }
 
-input[type="email"], input[type="password"], input[type="text"] {
+input[type="email"], input[type="password"], input[type="text"],
+input[type="number"], input[type="date"], select {
   padding: 9px 12px;
   border: 1px solid var(--surface-200);
   border-radius: 6px;
   font-size: 14px;
+  font-family: inherit;
+  background: var(--surface-0);
+  color: var(--ink-900);
 }
-input:focus { outline: 2px solid var(--navy-900); outline-offset: 1px; }
+input:focus, select:focus { outline: 2px solid var(--navy-700); outline-offset: 1px; }
 
-button[type="submit"] {
+button[type="submit"], .btn-primary {
   background: var(--navy-950);
   color: white;
   border: none;
   border-radius: 6px;
-  padding: 11px;
+  padding: 10px 16px;
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
+  font-family: inherit;
 }
-button[type="submit"]:hover { background: var(--navy-900); }
+button[type="submit"]:hover, .btn-primary:hover { background: var(--navy-900); }
 
 .qr { width: 160px; height: 160px; display: block; margin: 0 auto 20px; }
+.error { color: var(--signal-600); font-size: 13px; margin: 4px 0 0; min-height: 0; }
 
-.error { color: var(--signal-600); font-size: 13px; margin: 0; min-height: 0; }
-
-/* ---- Main app shell ---- */
-#screen-app {
-  display: flex;
-  min-height: 100vh;
-}
+#screen-app { display: flex; min-height: 100vh; }
 #screen-app.hidden { display: none; }
 
 .sidebar {
@@ -109,7 +112,7 @@ button[type="submit"]:hover { background: var(--navy-900); }
 
 .sidebar-user { padding: 16px 20px; border-top: 1px solid var(--surface-200); }
 .sidebar-user p { margin: 0; }
-#nav-name { font-size: 14px; color: var(--ink-900); }
+#nav-name { font-size: 14px; color: var(--ink-900); font-weight: 500; }
 #nav-role { margin-bottom: 10px; }
 
 .link-button {
@@ -119,16 +122,12 @@ button[type="submit"]:hover { background: var(--navy-900); }
   font-size: 12px;
   cursor: pointer;
   padding: 0;
+  font-family: inherit;
 }
 .link-button:hover { color: var(--signal-600); }
 
-.content {
-  flex: 1;
-  padding: 32px 40px;
-  max-width: 860px;
-}
-
-.content h1 { font-size: 21px; margin: 0 0 6px; }
+.content { flex: 1; padding: 32px 40px; max-width: 960px; }
+.content h1 { font-size: 21px; margin: 0 0 6px; letter-spacing: -0.01em; }
 .intro { color: var(--ink-500); font-size: 14px; max-width: 640px; margin: 0 0 28px; }
 
 .card {
@@ -137,6 +136,78 @@ button[type="submit"]:hover { background: var(--navy-900); }
   border-radius: 8px;
   padding: 20px;
   margin-bottom: 16px;
+  box-shadow: var(--shadow-card);
 }
 .card h2 { font-size: 14px; margin: 0 0 6px; }
 .card p { font-size: 14px; color: var(--ink-700); margin: 0; }
+
+.section { margin-bottom: 36px; }
+.section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.section-header h2 { font-size: 15px; margin: 0; }
+.section-header .section-note { font-size: 12px; color: var(--ink-500); }
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface-0);
+  border: 1px solid var(--surface-200);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+}
+.data-table th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-500);
+  font-weight: 600;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--surface-200);
+  background: var(--surface-50);
+}
+.data-table td {
+  padding: 11px 16px;
+  font-size: 14px;
+  color: var(--ink-900);
+  border-bottom: 1px solid var(--surface-100);
+}
+.data-table tr:last-child td { border-bottom: none; }
+.data-table .empty { color: var(--ink-500); font-style: normal; text-align: left; }
+
+.data-table select {
+  padding: 5px 8px;
+  font-size: 13px;
+}
+
+.inline-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding: 14px 16px;
+  background: var(--surface-0);
+  border: 1px solid var(--surface-200);
+  border-radius: 8px;
+}
+.inline-form input, .inline-form select { flex: 1; min-width: 140px; }
+.inline-form button { flex-shrink: 0; }
+
+.badge {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.badge-valid { background: #e7f4ec; color: var(--green-700); }
+.badge-renew-soon { background: #fdf1de; color: var(--amber-600); }
+.badge-expiring { background: #fdf1de; color: var(--amber-600); }
+.badge-expired { background: #fbe9e9; color: var(--signal-600); }
+.badge-no-date { background: var(--surface-100); color: var(--ink-500); }
