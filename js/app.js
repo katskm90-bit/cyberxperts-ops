@@ -253,6 +253,34 @@ function daysUntil(dateString) {
   return Math.round((target - now) / (1000 * 60 * 60 * 24));
 }
 
+// Rule based deal health, not a machine learning score, every input is
+// visible and explainable. Base of 50, adjusted by how recently the
+// opportunity moved and how far along it is.
+function computeDealHealth(o) {
+  let score = 50;
+  const daysSinceUpdate = Math.round((new Date() - new Date(o.updated_at)) / (1000 * 60 * 60 * 24));
+
+  if (daysSinceUpdate < 3) score += 10;
+  else if (daysSinceUpdate >= 14) score -= 30;
+  else if (daysSinceUpdate >= 7) score -= 15;
+
+  if (o.stage && o.stage !== "lead") score += 15;
+  if (o.value) score += 10;
+
+  score = Math.max(0, Math.min(100, score));
+
+  let label = "At risk";
+  let cls = "expired";
+  if (score >= 70) {
+    label = "Healthy";
+    cls = "valid";
+  } else if (score >= 40) {
+    label = "Watch";
+    cls = "renew-soon";
+  }
+  return { score, label, cls };
+}
+
 async function loadPipeline(pipelineType, bodyId) {
   const tbody = document.getElementById(bodyId);
 
@@ -276,14 +304,14 @@ async function loadPipeline(pipelineType, bodyId) {
   data.forEach((row) => {
     const tr = document.createElement("tr");
     const clientName = row.clients ? row.clients.name : "Unknown client";
-    const daysSinceUpdate = Math.round((new Date() - new Date(row.updated_at)) / (1000 * 60 * 60 * 24));
     const isOpen = row.stage !== "won" && row.stage !== "lost";
-    const stalledBadge =
-      isOpen && daysSinceUpdate >= 14
-        ? `<span class="badge badge-expiring" style="margin-left: 6px;">Stalled</span>`
-        : "";
+    let healthBadge = "";
+    if (isOpen) {
+      const health = computeDealHealth(row);
+      healthBadge = `<span class="badge badge-${health.cls}" style="margin-left: 6px;" title="Score ${health.score} of 100">${health.label}</span>`;
+    }
     tr.innerHTML = `
-      <td><a href="#" class="client-link" data-client-id="${row.client_id}">${clientName}</a>${stalledBadge}</td>
+      <td><a href="#" class="client-link" data-client-id="${row.client_id}">${clientName}</a>${healthBadge}</td>
       <td>
         <select data-id="${row.id}" class="stage-select">
           ${STAGE_OPTIONS.map(
@@ -1731,7 +1759,7 @@ async function loadClientWorkspace(clientId) {
 
   const { data: documents } = await supabase
     .from("documents")
-    .select("id, file_name, file_path, created_at")
+    .select("id, file_name, file_path, kind, created_at")
     .eq("client_id", clientId)
     .order("created_at", { ascending: false });
 
@@ -1806,17 +1834,17 @@ async function loadClientWorkspace(clientId) {
     </div>
 
     <div class="section">
-      <div class="section-header"><h2>Documents</h2></div>
+      <div class="section-header"><h2>Documents and voice notes</h2></div>
       <table class="data-table">
-        <thead><tr><th>File</th><th>Uploaded</th><th></th></tr></thead>
+        <thead><tr><th>Item</th><th>Uploaded</th><th></th></tr></thead>
         <tbody id="documents-body">
           ${
             (documents || []).length
               ? documents
-                  .map(
-                    (d) =>
-                      `<tr><td>${d.file_name}</td><td>${new Date(d.created_at).toLocaleDateString("en-ZA")}</td><td><button type="button" class="btn-primary btn-small download-doc" data-path="${d.file_path}" data-name="${d.file_name}">Download</button></td></tr>`
-                  )
+                  .map((d) => {
+                    const actionLabel = d.kind === "voice" ? "Play" : "Download";
+                    return `<tr><td>${d.file_name}</td><td>${new Date(d.created_at).toLocaleDateString("en-ZA")}</td><td><button type="button" class="btn-primary btn-small download-doc" data-path="${d.file_path}" data-name="${d.file_name}" data-kind="${d.kind}">${actionLabel}</button></td></tr>`;
+                  })
                   .join("")
               : `<tr><td colspan="3" class="empty">None yet.</td></tr>`
           }
@@ -1827,6 +1855,11 @@ async function loadClientWorkspace(clientId) {
         <button type="submit">Upload</button>
       </form>
       <p id="add-document-error" class="error"></p>
+      <div class="inline-form">
+        <button type="button" id="record-voice-btn" class="btn-primary">Record voice note</button>
+        <span id="voice-note-status" class="muted small"></span>
+      </div>
+      <p id="voice-note-error" class="error"></p>
     </div>
 
     <div class="section">
@@ -1912,11 +1945,78 @@ async function loadClientWorkspace(clientId) {
         .from("client-documents")
         .createSignedUrl(btn.dataset.path, 60);
       if (error || !data) {
-        alert("Could not create a download link. " + (error ? error.message : ""));
+        alert("Could not create a link. " + (error ? error.message : ""));
         return;
       }
-      window.open(data.signedUrl, "_blank");
+      if (btn.dataset.kind === "voice") {
+        const audio = new Audio(data.signedUrl);
+        audio.play();
+      } else {
+        window.open(data.signedUrl, "_blank");
+      }
     });
+  });
+
+  let mediaRecorder = null;
+  let recordedChunks = [];
+  const recordBtn = document.getElementById("record-voice-btn");
+  const voiceStatus = document.getElementById("voice-note-status");
+  const voiceError = document.getElementById("voice-note-error");
+
+  recordBtn.addEventListener("click", async () => {
+    voiceError.textContent = "";
+
+    if (!mediaRecorder || mediaRecorder.state === "inactive") {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        recordedChunks = [];
+
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) recordedChunks.push(e.data);
+        };
+
+        mediaRecorder.onstop = async () => {
+          voiceStatus.textContent = "Saving";
+          const blob = new Blob(recordedChunks, { type: "audio/webm" });
+          const path = clientId + "/voice_" + Date.now() + ".webm";
+
+          const { error: uploadError } = await supabase.storage
+            .from("client-documents")
+            .upload(path, blob);
+          if (uploadError) {
+            voiceError.textContent = uploadError.message;
+            voiceStatus.textContent = "";
+            return;
+          }
+
+          const { error: recordError } = await supabase.from("documents").insert({
+            client_id: clientId,
+            file_name: "Voice note, " + new Date().toLocaleString("en-ZA"),
+            file_path: path,
+            uploaded_by: currentProfile.id,
+            kind: "voice"
+          });
+          if (recordError) {
+            voiceError.textContent = recordError.message;
+            voiceStatus.textContent = "";
+            return;
+          }
+
+          await loadClientWorkspace(clientId);
+        };
+
+        mediaRecorder.start();
+        recordBtn.textContent = "Stop recording";
+        voiceStatus.textContent = "Recording";
+      } catch (err) {
+        voiceError.textContent = "Could not access the microphone. " + err.message;
+      }
+    } else {
+      mediaRecorder.stop();
+      mediaRecorder.stream.getTracks().forEach((track) => track.stop());
+      recordBtn.textContent = "Record voice note";
+    }
   });
 
   document.getElementById("add-note-form").addEventListener("submit", async (e) => {
