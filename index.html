@@ -162,47 +162,180 @@
       <div class="module hidden" data-module="cybersecurity">
         <h1>Cybersecurity</h1>
         <p class="intro">Technical scoping for both sales pipelines, plus findings from live client engagements that indicate further need.</p>
-        <div class="card"><h2>Scoping and sign off queue</h2><p>Structure only. Proposals awaiting technical scoping from either pipeline.</p></div>
-        <div class="card"><h2>Second reviewer control</h2><p>Threshold is a placeholder. Proposals above a configurable value require a second technical reviewer.</p></div>
-        <div class="card"><h2>Findings to Sales</h2><p>Structure only. Findings that suggest a client needs further work are routed to the relevant Account Manager.</p></div>
+
+        <div class="section">
+          <div class="section-header">
+            <h2>Scoping and sign off queue</h2>
+            <span class="section-note">Second reviewer requirement follows the threshold set in Settings</span>
+          </div>
+          <table class="data-table">
+            <thead><tr><th>Client</th><th>Scope</th><th>Status</th><th></th></tr></thead>
+            <tbody id="proposals-body"><tr><td colspan="4" class="empty">Loading</td></tr></tbody>
+          </table>
+          <form id="add-proposal-form" class="inline-form">
+            <select id="proposal-opportunity" required></select>
+            <input id="proposal-scope" type="text" placeholder="Scope, one line" required />
+            <button type="submit">Add for scoping</button>
+          </form>
+          <p id="add-proposal-error" class="error"></p>
+        </div>
+
+        <div class="section">
+          <div class="section-header"><h2>Findings to Sales</h2></div>
+          <p class="intro" style="margin-bottom: 12px;">
+            Logs a new private sector opportunity for Sales to follow up on, rather than leaving
+            it inside an operational ticket only Cybersecurity can see.
+          </p>
+          <form id="add-finding-form" class="inline-form">
+            <input id="finding-client" type="text" placeholder="Client name" required />
+            <input id="finding-note" type="text" placeholder="What was found" required />
+            <button type="submit">Send to Sales</button>
+          </form>
+          <p id="add-finding-error" class="error"></p>
+        </div>
       </div>
 
       <div class="module hidden" data-module="it_delivery">
         <h1>IT Delivery</h1>
         <p class="intro">Client facing ICT service delivery, structured the same way as Managed Security Services delivery.</p>
-        <div class="card"><h2>Client engagement and delivery tracking</h2><p>Structure only. Active ICT service engagements per client, with SLA targets.</p></div>
-        <div class="card"><h2>Delivery to Finance</h2><p>Structure only. Delivery milestones raise an invoicing event.</p></div>
+
+        <div class="section">
+          <div class="section-header"><h2>Client engagement and delivery tracking</h2></div>
+          <table class="data-table">
+            <thead><tr><th>Engagement</th><th>SLA target</th><th>Status</th></tr></thead>
+            <tbody id="delivery-body"><tr><td colspan="3" class="empty">Loading</td></tr></tbody>
+          </table>
+          <form id="add-delivery-form" class="inline-form">
+            <input id="delivery-title" type="text" placeholder="Client or engagement name" required />
+            <input id="delivery-sla" type="text" placeholder="SLA target, for example 4 hour response" />
+            <button type="submit">Add engagement</button>
+          </form>
+          <p id="add-delivery-error" class="error"></p>
+        </div>
+
+        <p class="intro">
+          Raising an invoice from a completed engagement is done from the Finance module for now,
+          since automatically linking a delivery milestone to an invoice needs the project and
+          contract chain to be populated first, which is not yet built.
+        </p>
       </div>
 
       <div class="module hidden" data-module="internal_it">
         <h1>Internal IT & Staff Support</h1>
         <p class="intro">Kept separate from client facing IT Delivery by design. Sits under the Operations Director.</p>
-        <div class="card"><h2>Joiner, mover, leaver events</h2><p>Structure only. Raised by the HR Officer. Covers new starter provisioning, internal role changes, and exit access revocation.</p></div>
+
+        <div class="section">
+          <div class="section-header"><h2>Joiner, mover, leaver events</h2></div>
+          <table class="data-table">
+            <thead><tr><th>Staff member</th><th>Event</th><th>Provisioning status</th></tr></thead>
+            <tbody id="staff-events-body"><tr><td colspan="3" class="empty">Loading</td></tr></tbody>
+          </table>
+          <form id="add-staff-event-form" class="inline-form">
+            <input id="staff-name" type="text" placeholder="Staff member name" required />
+            <select id="staff-event-type" required>
+              <option value="joiner">Joiner</option>
+              <option value="mover">Mover</option>
+              <option value="leaver">Leaver</option>
+            </select>
+            <button type="submit">Log event</button>
+          </form>
+          <p id="add-staff-event-error" class="error"></p>
+        </div>
       </div>
 
       <div class="module hidden" data-module="finance">
         <h1>Finance</h1>
-        <p class="intro">Invoicing triggered by delivery milestones. Tender and private sector invoicing are tracked with their own payment term expectations.</p>
-        <div class="card"><h2>Invoices</h2><p>Structure only. Raised from delivery milestones.</p></div>
-        <div class="card"><h2>Approval routing</h2><p>Threshold is a placeholder. Invoices and expenses above a configurable value require Managing Director approval.</p></div>
+        <p class="intro">Invoices above the threshold set in Settings need the System Super User to approve them. Below it, Finance can approve directly.</p>
+
+        <div class="section">
+          <div class="section-header"><h2>Invoices</h2></div>
+          <table class="data-table">
+            <thead><tr><th>Description</th><th>Amount</th><th>Status</th><th></th></tr></thead>
+            <tbody id="invoices-body"><tr><td colspan="4" class="empty">Loading</td></tr></tbody>
+          </table>
+          <form id="add-invoice-form" class="inline-form">
+            <input id="invoice-description" type="text" placeholder="What this invoice is for" required />
+            <input id="invoice-amount" type="number" step="0.01" placeholder="Amount in Rand" required />
+            <button type="submit">Add invoice</button>
+          </form>
+          <p id="add-invoice-error" class="error"></p>
+        </div>
       </div>
 
       <div class="module hidden" data-module="operations">
         <h1>Operations</h1>
         <p class="intro">Covers project delivery, quality assurance, HR triggered events, and client relationship escalation.</p>
-        <div class="card"><h2>Project delivery</h2><p>Structure only. Delivery execution for won business, owned by the Project Manager.</p></div>
-        <div class="card"><h2>Quality assurance</h2><p>Structure only. SLA and delivery monitoring, and non conformance tracking with an assigned owner, a due date, and a verified close.</p></div>
-        <div class="card"><h2>Client offboarding</h2><p>Structure only. A client relationship is not closed until data return, access revocation, and retention are each confirmed.</p></div>
-        <div class="card"><h2>Service Manager visibility</h2><p>Structure only. Combined view of delivery status and account status.</p></div>
+
+        <div class="section">
+          <div class="section-header"><h2>Project delivery</h2></div>
+          <table class="data-table">
+            <thead><tr><th>Project</th><th>Status</th></tr></thead>
+            <tbody id="projects-body"><tr><td colspan="2" class="empty">Loading</td></tr></tbody>
+          </table>
+          <form id="add-project-form" class="inline-form">
+            <input id="project-title" type="text" placeholder="Project name" required />
+            <button type="submit">Add project</button>
+          </form>
+          <p id="add-project-error" class="error"></p>
+        </div>
+
+        <div class="section">
+          <div class="section-header"><h2>Quality assurance</h2></div>
+          <table class="data-table">
+            <thead><tr><th>Finding</th><th>Due date</th><th>Status</th><th></th></tr></thead>
+            <tbody id="nc-body"><tr><td colspan="4" class="empty">Loading</td></tr></tbody>
+          </table>
+          <form id="add-nc-form" class="inline-form">
+            <input id="nc-finding" type="text" placeholder="What was found" required />
+            <input id="nc-due" type="date" />
+            <button type="submit">Log finding</button>
+          </form>
+          <p id="add-nc-error" class="error"></p>
+        </div>
+
+        <div class="section">
+          <div class="section-header"><h2>Client offboarding</h2></div>
+          <table class="data-table">
+            <thead><tr><th>Client</th><th>Data returned</th><th>Access revoked</th><th>Retention confirmed</th></tr></thead>
+            <tbody id="offboarding-body"><tr><td colspan="4" class="empty">Loading</td></tr></tbody>
+          </table>
+          <form id="add-offboarding-form" class="inline-form">
+            <input id="offboarding-client" type="text" placeholder="Client name" required />
+            <button type="submit">Start offboarding</button>
+          </form>
+          <p id="add-offboarding-error" class="error"></p>
+        </div>
       </div>
 
       <div class="module hidden" data-module="settings">
         <h1>Settings</h1>
         <p class="intro">System Super User only. Every configurable value referenced elsewhere in the app lives here.</p>
-        <div class="card"><h2>Second reviewer threshold</h2><p>Placeholder, editable.</p></div>
-        <div class="card"><h2>MD approval threshold</h2><p>Placeholder, editable.</p></div>
-        <div class="card"><h2>Contract renewal alert window</h2><p>Default: 60 days, editable.</p></div>
-        <div class="card"><h2>Compliance document register</h2><p>Placeholder list, editable.</p></div>
+
+        <form id="settings-form" class="section">
+          <div class="card">
+            <h2>Second reviewer threshold, in Rand</h2>
+            <p style="margin-bottom: 8px;">Proposals above this value need a second technical reviewer in Cybersecurity.</p>
+            <input id="setting-second-reviewer" type="number" step="1" />
+          </div>
+          <div class="card">
+            <h2>System approval threshold, in Rand</h2>
+            <p style="margin-bottom: 8px;">Invoices above this value need the System Super User to approve them, rather than Finance alone.</p>
+            <input id="setting-md-approval" type="number" step="1" />
+          </div>
+          <div class="card">
+            <h2>Contract renewal alert window, in days</h2>
+            <p style="margin-bottom: 8px;">How far ahead of expiry a contract shows as needing renewal.</p>
+            <input id="setting-renewal-days" type="number" step="1" />
+          </div>
+          <button type="submit">Save settings</button>
+          <p id="settings-error" class="error"></p>
+          <p id="settings-success" class="muted" style="margin: 8px 0 0;"></p>
+        </form>
+
+        <p class="intro">
+          The compliance document register itself is managed inside Sales & Bids, since that is
+          where it is actually used day to day.
+        </p>
       </div>
 
     </main>
