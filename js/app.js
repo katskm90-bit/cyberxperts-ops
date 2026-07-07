@@ -58,6 +58,7 @@ function renderNav(profile) {
     a.addEventListener("click", (e) => {
       e.preventDefault();
       showModule(item.key);
+      if (item.key === "sales") loadSalesModule();
     });
     nav.appendChild(a);
   });
@@ -221,6 +222,262 @@ supabase.auth.onAuthStateChange(() => {
   evaluateAuthState();
 });
 evaluateAuthState();
+
+// ---- Sales module ----
+// This is the first module built with real data behind it. The other
+// modules stay as placeholders until each one gets the same treatment.
+
+const STAGE_OPTIONS = ["lead", "qualifying", "scoping", "proposal", "submitted", "won", "lost"];
+
+function formatRand(value) {
+  if (value === null || value === undefined || value === "") return "—";
+  return "R " + Number(value).toLocaleString("en-ZA", { minimumFractionDigits: 0 });
+}
+
+function daysUntil(dateString) {
+  if (!dateString) return null;
+  const target = new Date(dateString + "T00:00:00");
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  return Math.round((target - now) / (1000 * 60 * 60 * 24));
+}
+
+async function loadPipeline(pipelineType, bodyId) {
+  const tbody = document.getElementById(bodyId);
+
+  const { data, error } = await supabase
+    .from("opportunities")
+    .select("id, stage, value, clients(name)")
+    .eq("pipeline_type", pipelineType)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="3" class="empty">Could not load this pipeline. ${error.message}</td></tr>`;
+    return;
+  }
+
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="3" class="empty">No opportunities logged yet.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = "";
+  data.forEach((row) => {
+    const tr = document.createElement("tr");
+    const clientName = row.clients ? row.clients.name : "Unknown client";
+    tr.innerHTML = `
+      <td>${clientName}</td>
+      <td>
+        <select data-id="${row.id}" class="stage-select">
+          ${STAGE_OPTIONS.map(
+            (s) => `<option value="${s}" ${s === row.stage ? "selected" : ""}>${s}</option>`
+          ).join("")}
+        </select>
+      </td>
+      <td>${formatRand(row.value)}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll(".stage-select").forEach((select) => {
+    select.addEventListener("change", async (e) => {
+      const id = e.target.dataset.id;
+      const { error: updateError } = await supabase
+        .from("opportunities")
+        .update({ stage: e.target.value })
+        .eq("id", id);
+      if (updateError) {
+        alert("Could not update this opportunity. " + updateError.message);
+      }
+    });
+  });
+}
+
+async function loadComplianceDocuments() {
+  const tbody = document.getElementById("compliance-body");
+
+  const { data, error } = await supabase
+    .from("compliance_documents")
+    .select("id, name, expiry_date")
+    .order("expiry_date", { ascending: true });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="3" class="empty">${error.message}</td></tr>`;
+    return;
+  }
+
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="3" class="empty">No documents added yet.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = "";
+  data.forEach((doc) => {
+    const daysLeft = daysUntil(doc.expiry_date);
+    let badge = "no-date";
+    let label = "No expiry set";
+    if (daysLeft !== null) {
+      if (daysLeft < 0) {
+        badge = "expired";
+        label = "Expired";
+      } else if (daysLeft <= 30) {
+        badge = "expiring";
+        label = daysLeft + " days left";
+      } else if (daysLeft <= 90) {
+        badge = "renew-soon";
+        label = daysLeft + " days left";
+      } else {
+        badge = "valid";
+        label = "Valid";
+      }
+    }
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${doc.name}</td>
+      <td>${doc.expiry_date ?? "—"}</td>
+      <td><span class="badge badge-${badge}">${label}</span></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+async function getContractRenewalAlertDays() {
+  const { data, error } = await supabase
+    .from("settings")
+    .select("value")
+    .eq("key", "contract_renewal_alert_days")
+    .maybeSingle();
+  if (error || !data) return 60;
+  return Number(data.value) || 60;
+}
+
+async function loadContracts() {
+  const tbody = document.getElementById("contracts-body");
+  const alertDays = await getContractRenewalAlertDays();
+
+  const { data, error } = await supabase
+    .from("contracts")
+    .select("id, end_date, clients(name)")
+    .order("end_date", { ascending: true });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="3" class="empty">${error.message}</td></tr>`;
+    return;
+  }
+
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="3" class="empty">No contracts recorded yet.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = "";
+  data.forEach((c) => {
+    const daysLeft = daysUntil(c.end_date);
+    let badge = "no-date";
+    let label = "No end date set";
+    if (daysLeft !== null) {
+      if (daysLeft < 0) {
+        badge = "expired";
+        label = "Lapsed";
+      } else if (daysLeft <= alertDays) {
+        badge = "expiring";
+        label = "Renew, " + daysLeft + " days left";
+      } else {
+        badge = "valid";
+        label = "Active";
+      }
+    }
+    const clientName = c.clients ? c.clients.name : "Unknown client";
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${clientName}</td>
+      <td>${c.end_date ?? "—"}</td>
+      <td><span class="badge badge-${badge}">${label}</span></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+async function loadSalesModule() {
+  await Promise.all([
+    loadPipeline("tender", "sales-tender-body"),
+    loadPipeline("private", "sales-private-body"),
+    loadPipeline("partner", "sales-partner-body"),
+    loadComplianceDocuments(),
+    loadContracts()
+  ]);
+}
+
+document.getElementById("add-opportunity-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const pipeline = document.getElementById("opp-pipeline").value;
+  const clientName = document.getElementById("opp-client").value.trim();
+  const rawValue = document.getElementById("opp-value").value;
+  const value = rawValue === "" ? null : Number(rawValue);
+  const errorEl = document.getElementById("add-opportunity-error");
+  errorEl.textContent = "";
+
+  const { data: existingClient } = await supabase
+    .from("clients")
+    .select("id")
+    .eq("name", clientName)
+    .maybeSingle();
+
+  let clientId = existingClient ? existingClient.id : null;
+
+  if (!clientId) {
+    const { data: newClient, error: clientError } = await supabase
+      .from("clients")
+      .insert({ name: clientName })
+      .select("id")
+      .single();
+    if (clientError) {
+      errorEl.textContent = clientError.message;
+      return;
+    }
+    clientId = newClient.id;
+  }
+
+  const { error: oppError } = await supabase.from("opportunities").insert({
+    client_id: clientId,
+    pipeline_type: pipeline,
+    stage: "lead",
+    value: value,
+    owner_id: currentProfile.id
+  });
+
+  if (oppError) {
+    errorEl.textContent = oppError.message;
+    return;
+  }
+
+  form.reset();
+  await loadSalesModule();
+});
+
+document.getElementById("add-compliance-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const name = document.getElementById("doc-name").value.trim();
+  const expiry = document.getElementById("doc-expiry").value;
+  const errorEl = document.getElementById("add-compliance-error");
+  errorEl.textContent = "";
+
+  const { error } = await supabase.from("compliance_documents").insert({
+    name,
+    expiry_date: expiry,
+    owner_id: currentProfile.id
+  });
+
+  if (error) {
+    errorEl.textContent = error.message;
+    return;
+  }
+
+  form.reset();
+  await loadComplianceDocuments();
+});
 
 // ---- Offline support ----
 if ("serviceWorker" in navigator) {
