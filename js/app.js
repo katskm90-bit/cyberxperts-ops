@@ -1405,183 +1405,183 @@ const STAGE_WEIGHT = {
   lost: 0
 };
 
-async function loadMetricRow() {
-  const row = document.getElementById("metric-row");
-  const dept = currentProfile.department;
-  const isSystem = currentProfile.role_tier === "system";
+// Fetches once, never throws. Any query that fails returns an empty list
+// instead of stopping everything after it. This is the fix for the
+// regression, one failed call can no longer strand the rest of the page
+// on "Loading" forever.
+async function fetchSafely(queryPromise) {
+  try {
+    const { data, error } = await queryPromise;
+    if (error) {
+      console.error(error);
+      return [];
+    }
+    return data || [];
+  } catch (err) {
+    console.error(err);
+    return [];
+  }
+}
+
+// Draws a chart if the library loaded and the data is usable. If Chart is
+// unavailable, or drawing throws for any reason, the canvas is replaced
+// with a plain sentence instead of staying blank or breaking the page.
+function safeChart(canvasId, config, hasData) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+
+  if (!hasData) {
+    const p = document.createElement("p");
+    p.className = "intro";
+    p.textContent = "No data available yet.";
+    canvas.replaceWith(p);
+    return;
+  }
+
+  if (typeof Chart === "undefined") {
+    const p = document.createElement("p");
+    p.className = "intro";
+    p.textContent = "Chart library did not load. Figures are available in the table below.";
+    canvas.replaceWith(p);
+    return;
+  }
+
+  try {
+    const key = canvasId + "_instance";
+    if (window[key]) window[key].destroy();
+    window[key] = new Chart(canvas, config);
+  } catch (err) {
+    console.error(err);
+    const p = document.createElement("p");
+    p.className = "intro";
+    p.textContent = "Could not render this chart.";
+    canvas.replaceWith(p);
+  }
+}
+
+function emptyRow(colspan, message) {
+  return `<tr><td colspan="${colspan}" class="empty">${message}</td></tr>`;
+}
+
+function showSection(id, visible) {
+  const el = document.getElementById(id);
+  if (el) el.classList.toggle("hidden", !visible);
+}
+
+// ---- Section renderers ----
+// Every one of these is synchronous. All the data they need has already
+// been fetched safely before any of them run, so none of them can be
+// interrupted partway through by a network failure.
+
+function renderMetricRow(d, dept, isSystem) {
   const tiles = [];
 
   if (isSystem || dept === "sales") {
-    const { data: opps } = await supabase.from("opportunities").select("value, stage");
-    const open = (opps || []).filter((o) => o.stage !== "won" && o.stage !== "lost");
-    const grossPipeline = open.reduce((sum, o) => sum + (Number(o.value) || 0), 0);
-    const weightedPipeline = open.reduce(
-      (sum, o) => sum + (Number(o.value) || 0) * (STAGE_WEIGHT[o.stage] ?? 0.1),
-      0
-    );
+    const open = d.opportunities.filter((o) => o.stage !== "won" && o.stage !== "lost");
+    const grossPipeline = open.reduce((s, o) => s + (Number(o.value) || 0), 0);
+    const weightedPipeline = open.reduce((s, o) => s + (Number(o.value) || 0) * (STAGE_WEIGHT[o.stage] ?? 0.1), 0);
     tiles.push({ label: "Gross pipeline", value: formatRand(grossPipeline) });
     tiles.push({ label: "Weighted pipeline", value: formatRand(weightedPipeline) });
-
-    const alertDays = await getContractRenewalAlertDays();
-    const { data: contractRows } = await supabase.from("contracts").select("end_date");
-    const needingRenewal = (contractRows || []).filter((c) => {
-      const days = daysUntil(c.end_date);
-      return days !== null && days >= 0 && days <= alertDays;
-    }).length;
-    tiles.push({ label: "Contracts expiring", value: needingRenewal });
-
-    const { data: docs } = await supabase.from("compliance_documents").select("expiry_date");
-    const compliance = (docs || []).filter((d) => {
-      const days = daysUntil(d.expiry_date);
-      return days !== null && days <= 30;
-    }).length;
-    tiles.push({ label: "Compliance risks", value: compliance });
+    tiles.push({ label: "Contracts expiring", value: d.contractsNeedingRenewal.length });
+    tiles.push({ label: "Compliance risks", value: d.complianceExpiringSoon.length });
   }
 
   if (isSystem || dept === "operations") {
-    const { data: projs } = await supabase.from("projects").select("status");
-    tiles.push({ label: "Open projects", value: (projs || []).filter((p) => p.status === "active").length });
-
-    const { data: tickets } = await supabase
-      .from("delivery_tickets")
-      .select("status, sla_hours, created_at")
-      .not("sla_hours", "is", null);
-    const breaches = (tickets || []).filter((t) => {
-      if (t.status === "resolved") return false;
-      const hoursElapsed = (new Date() - new Date(t.created_at)) / (1000 * 60 * 60);
-      return hoursElapsed > Number(t.sla_hours);
-    }).length;
-    tiles.push({ label: "SLA breaches", value: breaches });
-
-    const { data: allocations } = await supabase.from("resource_allocations").select("profile_id, allocation_percent");
-    const { data: staff } = await supabase.from("profiles").select("id");
-    const totals = {};
-    (allocations || []).forEach((a) => {
-      totals[a.profile_id] = (totals[a.profile_id] || 0) + Number(a.allocation_percent || 0);
-    });
-    const utilised = (staff || []).length
-      ? Math.round(
-          (Object.values(totals).reduce((s, v) => s + Math.min(v, 100), 0) / ((staff || []).length * 100)) * 100
-        )
-      : 0;
-    tiles.push({ label: "Staff utilisation", value: utilised + "%" });
+    tiles.push({ label: "Open projects", value: d.projects.filter((p) => p.status === "active").length });
+    tiles.push({ label: "SLA breaches", value: d.slaBreaches.length });
+    tiles.push({ label: "Staff utilisation", value: d.utilisationPercent + "%" });
   }
 
   if (isSystem || dept === "finance") {
-    const { data: invs } = await supabase.from("invoices").select("amount, approval_status");
-    const outstanding = (invs || []).filter((i) => i.approval_status !== "approved");
+    const outstanding = d.invoices.filter((i) => i.approval_status !== "approved");
     tiles.push({ label: "Cash outstanding", value: formatRand(outstanding.reduce((s, i) => s + Number(i.amount || 0), 0)) });
   }
 
-  row.innerHTML = tiles.map((t) => metricTile(t.label, t.value)).join("");
+  const row = document.getElementById("metric-row");
+  row.innerHTML = tiles.length
+    ? tiles.map((t) => metricTile(t.label, t.value)).join("")
+    : `<p class="intro">No figures available for your role yet.</p>`;
 }
 
-async function loadSmartInsights() {
-  const container = document.getElementById("smart-insights");
+function renderSmartInsights(d, dept, isSystem) {
   const insights = [];
-  const dept = currentProfile.department;
-  const isSystem = currentProfile.role_tier === "system";
 
   if (isSystem || dept === "sales") {
-    const { data: opps } = await supabase.from("opportunities").select("id, value, stage, updated_at, clients(name)");
-    const stalled = (opps || []).filter((o) => {
-      if (o.stage === "won" || o.stage === "lost") return false;
-      const days = Math.round((new Date() - new Date(o.updated_at)) / (1000 * 60 * 60 * 24));
-      return days >= 14;
-    });
-    if (stalled.length) insights.push(`${stalled.length} proposal${stalled.length === 1 ? "" : "s"} have stalled for over fourteen days.`);
-
-    const alertDays = await getContractRenewalAlertDays();
-    const { data: contractRows } = await supabase.from("contracts").select("end_date, clients(name)");
-    const expiring = (contractRows || []).filter((c) => {
-      const days = daysUntil(c.end_date);
-      return days !== null && days >= 0 && days <= alertDays;
-    });
-    if (expiring.length) insights.push(`${expiring.length} contract${expiring.length === 1 ? "" : "s"} expire within ${alertDays} days.`);
+    if (d.stalledOpportunities.length) {
+      insights.push(`${d.stalledOpportunities.length} proposal${d.stalledOpportunities.length === 1 ? "" : "s"} have stalled for over fourteen days.`);
+    }
+    if (d.contractsNeedingRenewal.length) {
+      insights.push(`${d.contractsNeedingRenewal.length} contract${d.contractsNeedingRenewal.length === 1 ? "" : "s"} expire within ${d.renewalAlertDays} days.`);
+    }
+    const gross = d.opportunities.filter((o) => o.stage !== "won" && o.stage !== "lost").reduce((s, o) => s + (Number(o.value) || 0), 0);
+    if (gross > 5000000) insights.push(`Open pipeline has crossed R5 million.`);
   }
 
   if (isSystem || dept === "operations") {
-    const { data: allocations } = await supabase
-      .from("resource_allocations")
-      .select("profile_id, allocation_percent, profiles(full_name)");
-    const totals = {};
-    (allocations || []).forEach((a) => {
-      const name = a.profiles ? a.profiles.full_name : "Someone";
-      totals[name] = (totals[name] || 0) + Number(a.allocation_percent || 0);
-    });
-    const overAllocated = Object.entries(totals).filter(([, v]) => v > 100);
-    if (overAllocated.length) insights.push(`${overAllocated.length} staff member${overAllocated.length === 1 ? "" : "s"} exceed 100% utilisation.`);
+    if (d.overAllocatedCount) insights.push(`${d.overAllocatedCount} staff member${d.overAllocatedCount === 1 ? "" : "s"} exceed 100% utilisation.`);
+    if (d.underAllocatedCount) insights.push(`${d.underAllocatedCount} staff member${d.underAllocatedCount === 1 ? "" : "s"} are below 40% utilisation.`);
   }
 
-  if (isSystem) {
-    const { data: docs } = await supabase.from("compliance_documents").select("expiry_date");
-    const expiringDocs = (docs || []).filter((d) => {
-      const days = daysUntil(d.expiry_date);
-      return days !== null && days >= 0 && days <= 30;
-    });
-    if (expiringDocs.length) insights.push(`${expiringDocs.length} compliance document${expiringDocs.length === 1 ? "" : "s"} expire this month.`);
+  if (isSystem || dept === "finance") {
+    if (d.overdueInvoices.length) insights.push(`${d.overdueInvoices.length} invoice${d.overdueInvoices.length === 1 ? "" : "s"} are overdue.`);
   }
 
+  if (isSystem || dept === "sales" || dept === "operations") {
+    if (d.complianceExpiringSoon.length) insights.push(`${d.complianceExpiringSoon.length} compliance document${d.complianceExpiringSoon.length === 1 ? "" : "s"} expire soon.`);
+    if (d.noRecentContactClients.length) insights.push(`${d.noRecentContactClients.length} client${d.noRecentContactClients.length === 1 ? "" : "s"} have had no contact in over forty five days.`);
+  }
+
+  const container = document.getElementById("smart-insights");
   container.innerHTML = insights.length
     ? `<ul style="margin: 0; padding-left: 18px;">${insights.map((i) => `<li style="margin-bottom: 6px; font-size: 14px;">${i}</li>`).join("")}</ul>`
-    : `<p class="intro">No significant patterns detected right now.</p>`;
+    : `<p class="intro">No issues require executive attention.</p>`;
 }
 
-async function loadRevenueIntelligence() {
-  const wrapper = document.getElementById("section-revenue");
-  const dept = currentProfile.department;
-  const isSystem = currentProfile.role_tier === "system";
-  if (!isSystem && dept !== "sales") {
-    wrapper.classList.add("hidden");
-    return;
-  }
-  wrapper.classList.remove("hidden");
+function renderRevenueIntelligence(d, dept, isSystem) {
+  const visible = isSystem || dept === "sales";
+  showSection("section-revenue", visible);
+  if (!visible) return;
 
-  const { data: history } = await supabase
-    .from("opportunity_stage_history")
-    .select("stage, changed_at, opportunities(value, owner_id, profiles(full_name))")
-    .eq("stage", "won")
-    .order("changed_at", { ascending: true });
-
+  const won = d.stageHistory.filter((h) => h.stage === "won");
   const monthBuckets = {};
-  (history || []).forEach((h) => {
-    const d = new Date(h.changed_at);
-    const key = d.toLocaleDateString("en-ZA", { month: "short", year: "2-digit" });
+  won.forEach((h) => {
+    const key = new Date(h.changed_at).toLocaleDateString("en-ZA", { month: "short", year: "2-digit" });
     monthBuckets[key] = (monthBuckets[key] || 0) + Number(h.opportunities?.value || 0);
   });
   const monthLabels = Object.keys(monthBuckets).slice(-6);
   const monthValues = monthLabels.map((k) => monthBuckets[k]);
 
-  const revenueCanvas = document.getElementById("chart-monthly-revenue");
-  if (window.monthlyRevenueChart) window.monthlyRevenueChart.destroy();
-  window.monthlyRevenueChart = new Chart(revenueCanvas, {
-    type: "line",
-    data: { labels: monthLabels, datasets: [{ label: "Won value", data: monthValues, borderColor: "#2b4d86", backgroundColor: "rgba(43,77,134,0.1)", fill: true, tension: 0.3 }] },
-    options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
-  });
+  safeChart(
+    "chart-monthly-revenue",
+    {
+      type: "line",
+      data: { labels: monthLabels, datasets: [{ label: "Won value", data: monthValues, borderColor: "#2b4d86", backgroundColor: "rgba(43,77,134,0.1)", fill: true, tension: 0.3 }] },
+      options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+    },
+    monthLabels.length > 0
+  );
 
-  const { data: opps } = await supabase.from("opportunities").select("stage");
-  const stageCounts = STAGE_OPTIONS.map((s) => (opps || []).filter((o) => o.stage === s).length);
-  const pipelineCanvas = document.getElementById("chart-pipeline");
-  if (window.pipelineChart) window.pipelineChart.destroy();
-  window.pipelineChart = new Chart(pipelineCanvas, {
-    type: "bar",
-    data: { labels: STAGE_OPTIONS, datasets: [{ label: "Opportunities", data: stageCounts, backgroundColor: "#2b4d86" }] },
-    options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
-  });
+  const stageCounts = STAGE_OPTIONS.map((s) => d.opportunities.filter((o) => o.stage === s).length);
+  safeChart(
+    "chart-pipeline",
+    {
+      type: "bar",
+      data: { labels: STAGE_OPTIONS, datasets: [{ label: "Opportunities", data: stageCounts, backgroundColor: "#2b4d86" }] },
+      options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
+    },
+    d.opportunities.length > 0
+  );
 
-  const won = (history || []);
   const avgDealSize = won.length
     ? formatRand(won.reduce((s, h) => s + Number(h.opportunities?.value || 0), 0) / won.length)
     : "No won deals yet";
 
-  const { data: firstStage } = await supabase.from("opportunity_stage_history").select("opportunity_id, stage, changed_at");
-  const cycles = [];
   const byOpp = {};
-  (firstStage || []).forEach((r) => {
+  d.stageHistory.forEach((r) => {
     if (!byOpp[r.opportunity_id]) byOpp[r.opportunity_id] = [];
     byOpp[r.opportunity_id].push(r);
   });
+  const cycles = [];
   Object.values(byOpp).forEach((rows) => {
     const wonRow = rows.find((r) => r.stage === "won");
     if (!wonRow) return;
@@ -1591,9 +1591,8 @@ async function loadRevenueIntelligence() {
   });
   const avgCycle = cycles.length ? Math.round(cycles.reduce((s, c) => s + c, 0) / cycles.length) + " days" : "Not enough data yet";
 
-  const { data: allOpps } = await supabase.from("opportunities").select("stage, value");
-  const lostValue = (allOpps || []).filter((o) => o.stage === "lost").reduce((s, o) => s + Number(o.value || 0), 0);
-  const wonValue = (allOpps || []).filter((o) => o.stage === "won").reduce((s, o) => s + Number(o.value || 0), 0);
+  const lostValue = d.opportunities.filter((o) => o.stage === "lost").reduce((s, o) => s + Number(o.value || 0), 0);
+  const wonValue = d.opportunities.filter((o) => o.stage === "won").reduce((s, o) => s + Number(o.value || 0), 0);
   const leakage = wonValue + lostValue > 0 ? Math.round((lostValue / (wonValue + lostValue)) * 100) + "%" : "No closed deals yet";
 
   document.getElementById("revenue-stats").innerHTML = [
@@ -1603,238 +1602,285 @@ async function loadRevenueIntelligence() {
   ].join("");
 
   const leaderboard = {};
-  (history || []).forEach((h) => {
+  won.forEach((h) => {
     const name = h.opportunities?.profiles?.full_name ?? "Unassigned";
     leaderboard[name] = (leaderboard[name] || 0) + Number(h.opportunities?.value || 0);
   });
   const rows = Object.entries(leaderboard).sort((a, b) => b[1] - a[1]);
   document.getElementById("leaderboard-body").innerHTML = rows.length
     ? rows.map(([name, value]) => `<tr><td>${name}</td><td>${formatRand(value)}</td></tr>`).join("")
-    : `<tr><td colspan="2" class="empty">No won deals recorded yet.</td></tr>`;
+    : emptyRow(2, "No opportunities recorded.");
 }
 
-async function loadClientIntelligence() {
-  const wrapper = document.getElementById("section-clients");
-  const dept = currentProfile.department;
-  const isSystem = currentProfile.role_tier === "system";
-  if (!isSystem && dept !== "sales" && dept !== "operations") {
-    wrapper.classList.add("hidden");
-    return;
-  }
-  wrapper.classList.remove("hidden");
+function renderClientIntelligence(d, dept, isSystem) {
+  const visible = isSystem || dept === "sales" || dept === "operations";
+  showSection("section-clients", visible);
+  if (!visible) return;
 
-  const tbody = document.getElementById("clients-attention-body");
   const rows = [];
+  d.stalledOpportunities.forEach((o) => rows.push({ client: o.clients?.name ?? "Unknown client", reason: "Opportunity stalled 14+ days" }));
+  d.contractsNeedingRenewal.forEach((c) => rows.push({ client: c.clients?.name ?? "Unknown client", reason: "Contract expiring soon" }));
+  d.noRecentContactClients.forEach((name) => rows.push({ client: name, reason: "No contact in over forty five days" }));
 
-  const { data: opps } = await supabase.from("opportunities").select("stage, updated_at, clients(name)");
-  (opps || [])
-    .filter((o) => o.stage !== "won" && o.stage !== "lost")
-    .filter((o) => Math.round((new Date() - new Date(o.updated_at)) / (1000 * 60 * 60 * 24)) >= 14)
-    .forEach((o) => rows.push({ client: o.clients?.name ?? "Unknown client", reason: "Opportunity stalled 14+ days" }));
-
-  const alertDays = await getContractRenewalAlertDays();
-  const { data: contractRows } = await supabase.from("contracts").select("end_date, clients(name)");
-  (contractRows || [])
-    .filter((c) => {
-      const days = daysUntil(c.end_date);
-      return days !== null && days >= 0 && days <= alertDays;
-    })
-    .forEach((c) => rows.push({ client: c.clients?.name ?? "Unknown client", reason: "Contract expiring soon" }));
-
-  const { data: contactRows } = await supabase.from("contacts").select("last_contacted_at, clients(name)");
-  const byClient = {};
-  (contactRows || []).forEach((c) => {
-    const name = c.clients?.name ?? "Unknown client";
-    if (!byClient[name] || (c.last_contacted_at && c.last_contacted_at > byClient[name])) {
-      byClient[name] = c.last_contacted_at;
-    }
-  });
-  Object.entries(byClient).forEach(([name, lastDate]) => {
-    const days = daysUntil(lastDate);
-    if (days !== null && days < -40) rows.push({ client: name, reason: "No contact in over forty days" });
-  });
-
-  tbody.innerHTML = rows.length
+  document.getElementById("clients-attention-body").innerHTML = rows.length
     ? rows.map((r) => `<tr><td>${r.client}</td><td>${r.reason}</td></tr>`).join("")
-    : `<tr><td colspan="2" class="empty">Nothing needs attention right now.</td></tr>`;
+    : emptyRow(2, "No opportunities recorded.");
 }
 
-async function loadOperationsCommandCentre() {
-  const wrapper = document.getElementById("section-operations");
-  const dept = currentProfile.department;
-  const isSystem = currentProfile.role_tier === "system";
-  if (!isSystem && dept !== "operations" && dept !== "it_delivery") {
-    wrapper.classList.add("hidden");
-    return;
-  }
-  wrapper.classList.remove("hidden");
+function renderOperationsIntelligence(d, dept, isSystem) {
+  const visible = isSystem || dept === "operations" || dept === "it_delivery";
+  showSection("section-operations", visible);
+  if (!visible) return;
 
-  const { data: projs } = await supabase.from("projects").select("id, title, status, updated_at");
-  const atRisk = (projs || []).filter((p) => {
+  const atRisk = d.projects.filter((p) => {
     if (p.status === "complete") return false;
-    const days = Math.round((new Date() - new Date(p.updated_at)) / (1000 * 60 * 60 * 24));
+    const days = Math.round((new Date() - new Date(p.updated_at || p.created_at || new Date())) / (1000 * 60 * 60 * 24));
     return p.status === "on_hold" || days >= 21;
   });
 
-  const { data: allocations } = await supabase.from("resource_allocations").select("profile_id, allocation_percent, profiles(full_name)");
-  const totals = {};
-  (allocations || []).forEach((a) => {
-    const name = a.profiles ? a.profiles.full_name : "Unassigned";
-    totals[name] = (totals[name] || 0) + Number(a.allocation_percent || 0);
-  });
-  const overAllocated = Object.entries(totals).filter(([, v]) => v > 100).length;
-  const idle = Object.entries(totals).filter(([, v]) => v === 0).length;
-
-  const { data: myTasks } = await supabase.from("tasks").select("id, due_date, status").eq("status", "open");
   const todayStr = new Date().toISOString().slice(0, 10);
-  const dueToday = (myTasks || []).filter((t) => t.due_date === todayStr).length;
+  const dueToday = d.tasks.filter((t) => t.due_date === todayStr).length;
 
   document.getElementById("operations-stats").innerHTML = [
     metricTile("Projects at risk", atRisk.length),
-    metricTile("Overallocated staff", overAllocated),
-    metricTile("Idle staff", idle),
+    metricTile("Overallocated staff", d.overAllocatedCount),
+    metricTile("Idle staff", d.idleCount),
     metricTile("Tasks due today", dueToday)
   ].join("");
 
-  const tbody = document.getElementById("projects-at-risk-body");
-  tbody.innerHTML = atRisk.length
+  document.getElementById("projects-at-risk-body").innerHTML = atRisk.length
     ? atRisk.map((p) => `<tr><td>${p.title ?? "Untitled"}</td><td>${p.status}</td></tr>`).join("")
-    : `<tr><td colspan="2" class="empty">No projects at risk right now.</td></tr>`;
+    : emptyRow(2, "No active projects.");
 }
 
-async function loadFinancialControl() {
-  const wrapper = document.getElementById("section-finance");
+function renderFinancialIntelligence(d, dept, isSystem) {
+  const visible = isSystem || dept === "finance";
+  showSection("section-finance", visible);
+  if (!visible) return;
+
+  const outstanding = d.invoices.filter((i) => i.approval_status !== "approved");
+  const collected = d.invoices.filter((i) => i.approval_status === "approved");
+
+  document.getElementById("finance-stats").innerHTML = outstanding.length || collected.length
+    ? [
+        metricTile("Outstanding invoices", outstanding.length),
+        metricTile("Outstanding value", formatRand(outstanding.reduce((s, i) => s + Number(i.amount || 0), 0))),
+        metricTile("Collected value", formatRand(collected.reduce((s, i) => s + Number(i.amount || 0), 0))),
+        metricTile("Overdue invoices", d.overdueInvoices.length)
+      ].join("")
+    : `<p class="intro">No invoices awaiting approval.</p>`;
+}
+
+function renderComplianceIntelligence(d, dept, isSystem) {
+  const visible = isSystem || dept === "sales" || dept === "operations";
+  showSection("section-compliance", visible);
+  if (!visible) return;
+
+  const rows = [];
+  d.complianceDocs.forEach((doc) => {
+    const days = daysUntil(doc.expiry_date);
+    let status = "No expiry set";
+    if (days !== null) status = days < 0 ? "Expired" : days <= 30 ? days + " days left" : "Valid";
+    rows.push({ item: doc.name, type: "Compliance document", status });
+  });
+  d.nonConformances
+    .filter((n) => !n.closed_at)
+    .forEach((n) => rows.push({ item: n.finding, type: "Corrective action", status: n.due_date ? "Due " + n.due_date : "Open" }));
+
+  document.getElementById("compliance-workspace-body").innerHTML = rows.length
+    ? rows.map((r) => `<tr><td>${r.item}</td><td>${r.type}</td><td>${r.status}</td></tr>`).join("")
+    : emptyRow(3, "No outstanding actions.");
+}
+
+function renderPeopleIntelligence(d, dept, isSystem) {
+  const visible = isSystem || dept === "operations";
+  showSection("section-people", visible);
+  if (!visible) return;
+
+  document.getElementById("people-stats").innerHTML = [
+    metricTile("Headcount", d.staff.length),
+    metricTile("On the bench", d.idleCount),
+    metricTile("Certifications expiring", d.certsExpiringSoon)
+  ].join("");
+}
+
+function renderActivityStream(notifications, filterDept) {
+  const container = document.getElementById("activity-stream");
+  const list = filterDept ? notifications.filter((n) => n.department === filterDept) : notifications;
+  container.innerHTML = list.length
+    ? list
+        .map(
+          (n) =>
+            `<div class="activity-row"><span>${n.department ? "[" + DEPARTMENTS[n.department] + "] " : ""}${n.message}</span><span class="activity-when">${new Date(n.created_at).toLocaleString("en-ZA")}</span></div>`
+        )
+        .join("")
+    : `<div class="activity-row"><span>No activity recorded yet.</span></div>`;
+}
+
+function renderActivityFilters(notifications) {
+  const container = document.getElementById("activity-filters");
+  const options = [{ key: "", label: "All" }, ...Object.entries(DEPARTMENTS).map(([key, label]) => ({ key, label }))];
+  container.innerHTML = options
+    .map((o) => `<button type="button" class="btn-primary btn-small activity-filter-btn" data-key="${o.key}">${o.label}</button>`)
+    .join("");
+  container.querySelectorAll(".activity-filter-btn").forEach((btn) => {
+    btn.addEventListener("click", () => renderActivityStream(notifications, btn.dataset.key || null));
+  });
+}
+
+// ---- The single orchestrator ----
+// Fetches every dataset the dashboard needs, once, safely, then hands the
+// result to each renderer. Nothing renders until everything has either
+// arrived or safely failed into an empty list. This is what prevents the
+// regression from happening again.
+
+async function loadExecutiveDashboard() {
   const dept = currentProfile.department;
   const isSystem = currentProfile.role_tier === "system";
-  if (!isSystem && dept !== "finance") {
-    wrapper.classList.add("hidden");
-    return;
-  }
-  wrapper.classList.remove("hidden");
 
-  const { data: invs } = await supabase.from("invoices").select("amount, approval_status, due_date");
-  const outstanding = (invs || []).filter((i) => i.approval_status !== "approved");
-  const collected = (invs || []).filter((i) => i.approval_status === "approved");
-  const overdue = (invs || []).filter((i) => {
+  const [
+    opportunities,
+    contracts,
+    complianceDocs,
+    invoices,
+    projects,
+    tickets,
+    allocations,
+    staff,
+    contactRows,
+    nonConformances,
+    skills,
+    stageHistory,
+    tasks,
+    notifications
+  ] = await Promise.all([
+    fetchSafely(supabase.from("opportunities").select("id, value, stage, updated_at, owner_id, client_id, clients(name)")),
+    fetchSafely(supabase.from("contracts").select("id, end_date, client_id, clients(name)")),
+    fetchSafely(supabase.from("compliance_documents").select("id, name, expiry_date")),
+    fetchSafely(supabase.from("invoices").select("id, description, amount, approval_status, due_date")),
+    fetchSafely(supabase.from("projects").select("id, title, status, updated_at, created_at")),
+    fetchSafely(supabase.from("delivery_tickets").select("id, status, sla_hours, created_at").eq("department", "it_delivery")),
+    fetchSafely(supabase.from("resource_allocations").select("profile_id, allocation_percent, profiles(full_name)")),
+    fetchSafely(supabase.from("profiles").select("id, full_name")),
+    fetchSafely(supabase.from("contacts").select("id, last_contacted_at, client_id, clients(name)")),
+    fetchSafely(supabase.from("non_conformances").select("id, finding, closed_at, due_date")),
+    fetchSafely(supabase.from("skills").select("id, is_certification, expiry_date")),
+    fetchSafely(
+      supabase
+        .from("opportunity_stage_history")
+        .select("opportunity_id, stage, changed_at, opportunities(value, owner_id, profiles(full_name))")
+    ),
+    fetchSafely(supabase.from("tasks").select("id, title, due_date, status").eq("status", "open")),
+    fetchSafely(
+      supabase.from("notifications").select("message, department, created_at").order("created_at", { ascending: false }).limit(20)
+    )
+  ]);
+
+  const renewalAlertDays = await getContractRenewalAlertDays();
+
+  const stalledOpportunities = opportunities.filter((o) => {
+    if (o.stage === "won" || o.stage === "lost") return false;
+    const days = Math.round((new Date() - new Date(o.updated_at)) / (1000 * 60 * 60 * 24));
+    return days >= 14;
+  });
+
+  const contractsNeedingRenewal = contracts.filter((c) => {
+    const days = daysUntil(c.end_date);
+    return days !== null && days >= 0 && days <= renewalAlertDays;
+  });
+
+  const complianceExpiringSoon = complianceDocs.filter((doc) => {
+    const days = daysUntil(doc.expiry_date);
+    return days !== null && days <= 30;
+  });
+
+  const overdueInvoices = invoices.filter((i) => {
     const days = daysUntil(i.due_date);
     return i.approval_status !== "approved" && days !== null && days < 0;
   });
 
-  document.getElementById("finance-stats").innerHTML = [
-    metricTile("Outstanding invoices", outstanding.length),
-    metricTile("Outstanding value", formatRand(outstanding.reduce((s, i) => s + Number(i.amount || 0), 0))),
-    metricTile("Collected value", formatRand(collected.reduce((s, i) => s + Number(i.amount || 0), 0))),
-    metricTile("Overdue invoices", overdue.length)
-  ].join("");
-}
-
-async function loadComplianceWorkspace() {
-  const wrapper = document.getElementById("section-compliance");
-  const dept = currentProfile.department;
-  const isSystem = currentProfile.role_tier === "system";
-  if (!isSystem && dept !== "sales" && dept !== "operations") {
-    wrapper.classList.add("hidden");
-    return;
-  }
-  wrapper.classList.remove("hidden");
-
-  const rows = [];
-  const { data: docs } = await supabase.from("compliance_documents").select("name, expiry_date");
-  (docs || []).forEach((d) => {
-    const days = daysUntil(d.expiry_date);
-    let status = "No expiry set";
-    if (days !== null) status = days < 0 ? "Expired" : days <= 30 ? days + " days left" : "Valid";
-    rows.push({ item: d.name, type: "Compliance document", status });
+  const slaBreaches = tickets.filter((t) => {
+    if (t.status === "resolved" || !t.sla_hours) return false;
+    const hoursElapsed = (new Date() - new Date(t.created_at)) / (1000 * 60 * 60);
+    return hoursElapsed > Number(t.sla_hours);
   });
 
-  const { data: ncs } = await supabase.from("non_conformances").select("finding, closed_at, due_date");
-  (ncs || [])
-    .filter((n) => !n.closed_at)
-    .forEach((n) => rows.push({ item: n.finding, type: "Corrective action", status: n.due_date ? "Due " + n.due_date : "Open" }));
-
-  const tbody = document.getElementById("compliance-workspace-body");
-  tbody.innerHTML = rows.length
-    ? rows.map((r) => `<tr><td>${r.item}</td><td>${r.type}</td><td>${r.status}</td></tr>`).join("")
-    : `<tr><td colspan="3" class="empty">Nothing outstanding.</td></tr>`;
-}
-
-async function loadPeopleWorkspace() {
-  const wrapper = document.getElementById("section-people");
-  const dept = currentProfile.department;
-  const isSystem = currentProfile.role_tier === "system";
-  if (!isSystem && dept !== "operations") {
-    wrapper.classList.add("hidden");
-    return;
-  }
-  wrapper.classList.remove("hidden");
-
-  const { data: staff } = await supabase.from("profiles").select("id");
-  const { data: allocations } = await supabase.from("resource_allocations").select("profile_id, allocation_percent");
-  const totals = {};
-  (allocations || []).forEach((a) => {
-    totals[a.profile_id] = (totals[a.profile_id] || 0) + Number(a.allocation_percent || 0);
+  const allocationTotals = {};
+  allocations.forEach((a) => {
+    allocationTotals[a.profile_id] = (allocationTotals[a.profile_id] || 0) + Number(a.allocation_percent || 0);
   });
-  const bench = (staff || []).filter((p) => !totals[p.id]).length;
+  const overAllocatedCount = Object.values(allocationTotals).filter((v) => v > 100).length;
+  const underAllocatedCount = staff.filter((p) => (allocationTotals[p.id] || 0) > 0 && (allocationTotals[p.id] || 0) < 40).length;
+  const idleCount = staff.filter((p) => !allocationTotals[p.id]).length;
+  const utilisationPercent = staff.length
+    ? Math.round((Object.values(allocationTotals).reduce((s, v) => s + Math.min(v, 100), 0) / (staff.length * 100)) * 100)
+    : 0;
 
-  const { data: skillRows } = await supabase.from("skills").select("is_certification, expiry_date");
-  const certsExpiring = (skillRows || []).filter((s) => {
+  const contactByClient = {};
+  contactRows.forEach((c) => {
+    const name = c.clients?.name ?? "Unknown client";
+    if (!contactByClient[name] || (c.last_contacted_at && c.last_contacted_at > contactByClient[name])) {
+      contactByClient[name] = c.last_contacted_at;
+    }
+  });
+  const noRecentContactClients = Object.entries(contactByClient)
+    .filter(([, lastDate]) => {
+      const days = daysUntil(lastDate);
+      return days !== null && days < -45;
+    })
+    .map(([name]) => name);
+
+  const certsExpiringSoon = skills.filter((s) => {
     if (!s.is_certification) return false;
     const days = daysUntil(s.expiry_date);
     return days !== null && days >= 0 && days <= 60;
   }).length;
 
-  document.getElementById("people-stats").innerHTML = [
-    metricTile("Headcount", (staff || []).length),
-    metricTile("On the bench", bench),
-    metricTile("Certifications expiring", certsExpiring)
-  ].join("");
-}
+  const d = {
+    opportunities,
+    contracts,
+    complianceDocs,
+    invoices,
+    projects,
+    tickets,
+    allocations,
+    staff,
+    nonConformances,
+    skills,
+    stageHistory,
+    tasks,
+    notifications,
+    renewalAlertDays,
+    stalledOpportunities,
+    contractsNeedingRenewal,
+    complianceExpiringSoon,
+    overdueInvoices,
+    slaBreaches,
+    overAllocatedCount,
+    underAllocatedCount,
+    idleCount,
+    utilisationPercent,
+    noRecentContactClients,
+    certsExpiringSoon
+  };
 
-async function loadActivityStream(filterDept) {
-  const container = document.getElementById("activity-stream");
-  let query = supabase.from("notifications").select("message, department, created_at").order("created_at", { ascending: false }).limit(20);
-  if (filterDept) query = query.eq("department", filterDept);
-  const { data, error } = await query;
-
-  if (error || !data || !data.length) {
-    container.innerHTML = `<div class="activity-row"><span>Nothing recorded yet.</span></div>`;
-    return;
-  }
-
-  container.innerHTML = data
-    .map(
-      (n) =>
-        `<div class="activity-row"><span>${n.department ? "[" + departments[n.department] + "] " : ""}${n.message}</span><span class="activity-when">${new Date(n.created_at).toLocaleString("en-ZA")}</span></div>`
-    )
-    .join("");
-}
-
-function renderActivityFilters() {
-  const container = document.getElementById("activity-filters");
-  const options = [{ key: "", label: "All" }, ...Object.entries(departments).map(([key, label]) => ({ key, label }))];
-  container.innerHTML = options
-    .map((o) => `<button type="button" class="btn-primary btn-small activity-filter-btn" data-key="${o.key}">${o.label}</button>`)
-    .join("");
-  container.querySelectorAll(".activity-filter-btn").forEach((btn) => {
-    btn.addEventListener("click", () => loadActivityStream(btn.dataset.key || null));
-  });
+  renderMetricRow(d, dept, isSystem);
+  renderSmartInsights(d, dept, isSystem);
+  renderRevenueIntelligence(d, dept, isSystem);
+  renderClientIntelligence(d, dept, isSystem);
+  renderOperationsIntelligence(d, dept, isSystem);
+  renderFinancialIntelligence(d, dept, isSystem);
+  renderComplianceIntelligence(d, dept, isSystem);
+  renderPeopleIntelligence(d, dept, isSystem);
+  renderActivityFilters(notifications);
+  renderActivityStream(notifications);
 }
 
 async function loadHomeModule() {
-  renderActivityFilters();
-  await Promise.all([
-    loadNeedsAttention(),
-    loadMetricRow(),
-    loadSmartInsights(),
-    loadRevenueIntelligence(),
-    loadClientIntelligence(),
-    loadOperationsCommandCentre(),
-    loadFinancialControl(),
-    loadComplianceWorkspace(),
-    loadPeopleWorkspace(),
-    loadActivityStream()
-  ]);
+  await loadNeedsAttention();
+  await loadExecutiveDashboard();
 }
+
 
 // ---- Tasks, My Work ----
 
@@ -2480,7 +2526,7 @@ async function loadStaffDirectory() {
   tbody.innerHTML = data
     .map(
       (p) =>
-        `<tr><td>${p.full_name}</td><td>${p.department ? departments[p.department] : "System"}</td><td>${p.role_tier}</td></tr>`
+        `<tr><td>${p.full_name}</td><td>${p.department ? DEPARTMENTS[p.department] : "System"}</td><td>${p.role_tier}</td></tr>`
     )
     .join("");
 }
