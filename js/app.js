@@ -58,7 +58,7 @@ function renderNav(profile) {
     a.addEventListener("click", (e) => {
       e.preventDefault();
       showModule(item.key);
-      if (item.key === "sales") loadSalesModule();
+      if (MODULE_LOADERS[item.key]) MODULE_LOADERS[item.key]();
     });
     nav.appendChild(a);
   });
@@ -478,6 +478,665 @@ document.getElementById("add-compliance-form").addEventListener("submit", async 
   form.reset();
   await loadComplianceDocuments();
 });
+
+// ---- Cybersecurity module ----
+
+async function loadProposals() {
+  const tbody = document.getElementById("proposals-body");
+
+  const { data, error } = await supabase
+    .from("proposals")
+    .select("id, scope, requires_second_reviewer, signed_off_by, second_reviewer_id, opportunities(clients(name))")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty">${error.message}</td></tr>`;
+    return;
+  }
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty">Nothing awaiting scoping yet.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = "";
+  data.forEach((p) => {
+    const clientName = p.opportunities && p.opportunities.clients ? p.opportunities.clients.name : "Unknown client";
+    let status = "Awaiting sign off";
+    let actionLabel = "Sign off";
+    let disabled = false;
+
+    if (p.signed_off_by && p.requires_second_reviewer && !p.second_reviewer_id) {
+      status = "Signed off, awaiting second reviewer";
+      actionLabel = "Second review";
+    } else if (p.signed_off_by && (!p.requires_second_reviewer || p.second_reviewer_id)) {
+      status = "Fully signed off";
+      disabled = true;
+    }
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${clientName}</td>
+      <td>${p.scope ?? "—"}</td>
+      <td>${status}</td>
+      <td>${disabled ? "" : `<button type="button" class="btn-primary btn-small" data-id="${p.id}" data-signed="${!!p.signed_off_by}">${actionLabel}</button>`}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll("button[data-id]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.id;
+      const alreadySigned = btn.dataset.signed === "true";
+      const patch = alreadySigned
+        ? { second_reviewer_id: currentProfile.id }
+        : { signed_off_by: currentProfile.id };
+      const { error: updateError } = await supabase.from("proposals").update(patch).eq("id", id);
+      if (updateError) alert("Could not update this proposal. " + updateError.message);
+      await loadProposals();
+    });
+  });
+}
+
+async function populateProposalOpportunitySelect() {
+  const select = document.getElementById("proposal-opportunity");
+  const { data, error } = await supabase
+    .from("opportunities")
+    .select("id, value, clients(name)")
+    .order("created_at", { ascending: false });
+
+  if (error || !data) {
+    select.innerHTML = `<option value="">Could not load opportunities</option>`;
+    return;
+  }
+  select.innerHTML = data
+    .map((o) => {
+      const clientName = o.clients ? o.clients.name : "Unknown client";
+      return `<option value="${o.id}" data-value="${o.value ?? 0}">${clientName}</option>`;
+    })
+    .join("");
+}
+
+document.getElementById("add-proposal-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const select = document.getElementById("proposal-opportunity");
+  const opportunityId = select.value;
+  const opportunityValue = Number(select.selectedOptions[0]?.dataset.value || 0);
+  const scope = document.getElementById("proposal-scope").value.trim();
+  const errorEl = document.getElementById("add-proposal-error");
+  errorEl.textContent = "";
+
+  const { data: thresholdRow } = await supabase
+    .from("settings")
+    .select("value")
+    .eq("key", "second_reviewer_threshold")
+    .maybeSingle();
+  const threshold = Number(thresholdRow?.value || 0);
+
+  const { error } = await supabase.from("proposals").insert({
+    opportunity_id: opportunityId,
+    scope,
+    requires_second_reviewer: opportunityValue > threshold
+  });
+
+  if (error) {
+    errorEl.textContent = error.message;
+    return;
+  }
+  form.reset();
+  await loadProposals();
+});
+
+document.getElementById("add-finding-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const clientName = document.getElementById("finding-client").value.trim();
+  const note = document.getElementById("finding-note").value.trim();
+  const errorEl = document.getElementById("add-finding-error");
+  errorEl.textContent = "";
+
+  const { data: existingClient } = await supabase
+    .from("clients")
+    .select("id")
+    .eq("name", clientName)
+    .maybeSingle();
+
+  let clientId = existingClient ? existingClient.id : null;
+  if (!clientId) {
+    const { data: newClient, error: clientError } = await supabase
+      .from("clients")
+      .insert({ name: clientName })
+      .select("id")
+      .single();
+    if (clientError) {
+      errorEl.textContent = clientError.message;
+      return;
+    }
+    clientId = newClient.id;
+  }
+
+  const { error } = await supabase.from("opportunities").insert({
+    client_id: clientId,
+    pipeline_type: "private",
+    stage: "lead",
+    notes: note,
+    owner_id: currentProfile.id
+  });
+
+  if (error) {
+    errorEl.textContent = error.message;
+    return;
+  }
+  form.reset();
+});
+
+async function loadCybersecurityModule() {
+  await Promise.all([loadProposals(), populateProposalOpportunitySelect()]);
+}
+
+// ---- IT Delivery module ----
+
+const TICKET_STATUS_OPTIONS = ["open", "in_progress", "resolved"];
+
+async function loadDeliveryTickets() {
+  const tbody = document.getElementById("delivery-body");
+  const { data, error } = await supabase
+    .from("delivery_tickets")
+    .select("id, title, sla_target, status")
+    .eq("department", "it_delivery")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="3" class="empty">${error.message}</td></tr>`;
+    return;
+  }
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="3" class="empty">No engagements logged yet.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = "";
+  data.forEach((t) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${t.title ?? "Untitled engagement"}</td>
+      <td>${t.sla_target ?? "—"}</td>
+      <td>
+        <select data-id="${t.id}" class="ticket-status-select">
+          ${TICKET_STATUS_OPTIONS.map(
+            (s) => `<option value="${s}" ${s === t.status ? "selected" : ""}>${s.replace("_", " ")}</option>`
+          ).join("")}
+        </select>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll(".ticket-status-select").forEach((select) => {
+    select.addEventListener("change", async (e) => {
+      const { error: updateError } = await supabase
+        .from("delivery_tickets")
+        .update({ status: e.target.value })
+        .eq("id", e.target.dataset.id);
+      if (updateError) alert("Could not update this engagement. " + updateError.message);
+    });
+  });
+}
+
+document.getElementById("add-delivery-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const title = document.getElementById("delivery-title").value.trim();
+  const sla = document.getElementById("delivery-sla").value.trim();
+  const errorEl = document.getElementById("add-delivery-error");
+  errorEl.textContent = "";
+
+  const { error } = await supabase.from("delivery_tickets").insert({
+    department: "it_delivery",
+    title,
+    sla_target: sla || null,
+    status: "open"
+  });
+
+  if (error) {
+    errorEl.textContent = error.message;
+    return;
+  }
+  form.reset();
+  await loadDeliveryTickets();
+});
+
+async function loadITDeliveryModule() {
+  await loadDeliveryTickets();
+}
+
+// ---- Internal IT module ----
+
+const PROVISIONING_STATUS_OPTIONS = ["pending", "in_progress", "complete"];
+
+async function loadStaffEvents() {
+  const tbody = document.getElementById("staff-events-body");
+  const { data, error } = await supabase
+    .from("staff_events")
+    .select("id, staff_name, event_type, provisioning_status")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="3" class="empty">${error.message}</td></tr>`;
+    return;
+  }
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="3" class="empty">No events logged yet.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = "";
+  data.forEach((ev) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${ev.staff_name}</td>
+      <td>${ev.event_type}</td>
+      <td>
+        <select data-id="${ev.id}" class="staff-status-select">
+          ${PROVISIONING_STATUS_OPTIONS.map(
+            (s) => `<option value="${s}" ${s === ev.provisioning_status ? "selected" : ""}>${s.replace("_", " ")}</option>`
+          ).join("")}
+        </select>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll(".staff-status-select").forEach((select) => {
+    select.addEventListener("change", async (e) => {
+      const { error: updateError } = await supabase
+        .from("staff_events")
+        .update({ provisioning_status: e.target.value })
+        .eq("id", e.target.dataset.id);
+      if (updateError) alert("Could not update this event. " + updateError.message);
+    });
+  });
+}
+
+document.getElementById("add-staff-event-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const staffName = document.getElementById("staff-name").value.trim();
+  const eventType = document.getElementById("staff-event-type").value;
+  const errorEl = document.getElementById("add-staff-event-error");
+  errorEl.textContent = "";
+
+  const { error } = await supabase.from("staff_events").insert({
+    staff_name: staffName,
+    event_type: eventType,
+    raised_by_hr_officer_id: currentProfile.id,
+    provisioning_status: "pending"
+  });
+
+  if (error) {
+    errorEl.textContent = error.message;
+    return;
+  }
+  form.reset();
+  await loadStaffEvents();
+});
+
+async function loadInternalITModule() {
+  await loadStaffEvents();
+}
+
+// ---- Finance module ----
+
+async function loadInvoices() {
+  const tbody = document.getElementById("invoices-body");
+
+  const { data: thresholdRow } = await supabase
+    .from("settings")
+    .select("value")
+    .eq("key", "md_approval_threshold")
+    .maybeSingle();
+  const threshold = Number(thresholdRow?.value || 0);
+
+  const { data, error } = await supabase
+    .from("invoices")
+    .select("id, description, amount, approval_status")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty">${error.message}</td></tr>`;
+    return;
+  }
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty">No invoices raised yet.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = "";
+  data.forEach((inv) => {
+    const needsSystemApproval = Number(inv.amount) > threshold;
+    const canApprove =
+      inv.approval_status !== "approved" &&
+      (!needsSystemApproval || currentProfile.role_tier === "system");
+    let statusLabel = inv.approval_status;
+    if (inv.approval_status === "pending" && needsSystemApproval) {
+      statusLabel = "pending, needs System Super User";
+    }
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${inv.description ?? "—"}</td>
+      <td>${formatRand(inv.amount)}</td>
+      <td>${statusLabel}</td>
+      <td>${canApprove ? `<button type="button" class="btn-primary btn-small" data-id="${inv.id}">Approve</button>` : ""}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll("button[data-id]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const { error: updateError } = await supabase
+        .from("invoices")
+        .update({ approval_status: "approved", approved_by: currentProfile.id })
+        .eq("id", btn.dataset.id);
+      if (updateError) alert("Could not approve this invoice. " + updateError.message);
+      await loadInvoices();
+    });
+  });
+}
+
+document.getElementById("add-invoice-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const description = document.getElementById("invoice-description").value.trim();
+  const amount = Number(document.getElementById("invoice-amount").value);
+  const errorEl = document.getElementById("add-invoice-error");
+  errorEl.textContent = "";
+
+  const { error } = await supabase.from("invoices").insert({
+    description,
+    amount,
+    approval_status: "pending"
+  });
+
+  if (error) {
+    errorEl.textContent = error.message;
+    return;
+  }
+  form.reset();
+  await loadInvoices();
+});
+
+async function loadFinanceModule() {
+  await loadInvoices();
+}
+
+// ---- Operations module ----
+
+const PROJECT_STATUS_OPTIONS = ["active", "on_hold", "complete"];
+
+async function loadProjects() {
+  const tbody = document.getElementById("projects-body");
+  const { data, error } = await supabase
+    .from("projects")
+    .select("id, title, status")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="2" class="empty">${error.message}</td></tr>`;
+    return;
+  }
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="2" class="empty">No projects logged yet.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = "";
+  data.forEach((p) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${p.title ?? "Untitled project"}</td>
+      <td>
+        <select data-id="${p.id}" class="project-status-select">
+          ${PROJECT_STATUS_OPTIONS.map(
+            (s) => `<option value="${s}" ${s === p.status ? "selected" : ""}>${s.replace("_", " ")}</option>`
+          ).join("")}
+        </select>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll(".project-status-select").forEach((select) => {
+    select.addEventListener("change", async (e) => {
+      const { error: updateError } = await supabase
+        .from("projects")
+        .update({ status: e.target.value })
+        .eq("id", e.target.dataset.id);
+      if (updateError) alert("Could not update this project. " + updateError.message);
+    });
+  });
+}
+
+document.getElementById("add-project-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const title = document.getElementById("project-title").value.trim();
+  const errorEl = document.getElementById("add-project-error");
+  errorEl.textContent = "";
+
+  const { error } = await supabase.from("projects").insert({
+    title,
+    project_manager_id: currentProfile.id,
+    status: "active"
+  });
+
+  if (error) {
+    errorEl.textContent = error.message;
+    return;
+  }
+  form.reset();
+  await loadProjects();
+});
+
+async function loadNonConformances() {
+  const tbody = document.getElementById("nc-body");
+  const { data, error } = await supabase
+    .from("non_conformances")
+    .select("id, finding, due_date, closed_at")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty">${error.message}</td></tr>`;
+    return;
+  }
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty">No findings logged yet.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = "";
+  data.forEach((nc) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${nc.finding}</td>
+      <td>${nc.due_date ?? "—"}</td>
+      <td>${nc.closed_at ? "Closed" : "Open"}</td>
+      <td>${nc.closed_at ? "" : `<button type="button" class="btn-primary btn-small" data-id="${nc.id}">Close</button>`}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll("button[data-id]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const { error: updateError } = await supabase
+        .from("non_conformances")
+        .update({ closed_at: new Date().toISOString() })
+        .eq("id", btn.dataset.id);
+      if (updateError) alert("Could not close this finding. " + updateError.message);
+      await loadNonConformances();
+    });
+  });
+}
+
+document.getElementById("add-nc-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const finding = document.getElementById("nc-finding").value.trim();
+  const due = document.getElementById("nc-due").value || null;
+  const errorEl = document.getElementById("add-nc-error");
+  errorEl.textContent = "";
+
+  const { error } = await supabase.from("non_conformances").insert({
+    finding,
+    due_date: due,
+    owner_id: currentProfile.id
+  });
+
+  if (error) {
+    errorEl.textContent = error.message;
+    return;
+  }
+  form.reset();
+  await loadNonConformances();
+});
+
+async function loadClientOffboarding() {
+  const tbody = document.getElementById("offboarding-body");
+  const { data, error } = await supabase
+    .from("client_offboarding")
+    .select("id, data_returned, access_revoked, retention_confirmed, clients(name)")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty">${error.message}</td></tr>`;
+    return;
+  }
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty">No offboarding records yet.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = "";
+  data.forEach((row) => {
+    const clientName = row.clients ? row.clients.name : "Unknown client";
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${clientName}</td>
+      <td><input type="checkbox" data-id="${row.id}" data-field="data_returned" ${row.data_returned ? "checked" : ""} /></td>
+      <td><input type="checkbox" data-id="${row.id}" data-field="access_revoked" ${row.access_revoked ? "checked" : ""} /></td>
+      <td><input type="checkbox" data-id="${row.id}" data-field="retention_confirmed" ${row.retention_confirmed ? "checked" : ""} /></td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll("input[type=checkbox]").forEach((box) => {
+    box.addEventListener("change", async (e) => {
+      const patch = {};
+      patch[e.target.dataset.field] = e.target.checked;
+      const { error: updateError } = await supabase
+        .from("client_offboarding")
+        .update(patch)
+        .eq("id", e.target.dataset.id);
+      if (updateError) alert("Could not update this record. " + updateError.message);
+    });
+  });
+}
+
+document.getElementById("add-offboarding-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const clientName = document.getElementById("offboarding-client").value.trim();
+  const errorEl = document.getElementById("add-offboarding-error");
+  errorEl.textContent = "";
+
+  const { data: existingClient } = await supabase
+    .from("clients")
+    .select("id")
+    .eq("name", clientName)
+    .maybeSingle();
+
+  let clientId = existingClient ? existingClient.id : null;
+  if (!clientId) {
+    const { data: newClient, error: clientError } = await supabase
+      .from("clients")
+      .insert({ name: clientName })
+      .select("id")
+      .single();
+    if (clientError) {
+      errorEl.textContent = clientError.message;
+      return;
+    }
+    clientId = newClient.id;
+  }
+
+  const { error } = await supabase.from("client_offboarding").insert({ client_id: clientId });
+
+  if (error) {
+    errorEl.textContent = error.message;
+    return;
+  }
+  form.reset();
+  await loadClientOffboarding();
+});
+
+async function loadOperationsModule() {
+  await Promise.all([loadProjects(), loadNonConformances(), loadClientOffboarding()]);
+}
+
+// ---- Settings module ----
+
+async function loadSettingsModule() {
+  const { data, error } = await supabase.from("settings").select("key, value");
+  const errorEl = document.getElementById("settings-error");
+  errorEl.textContent = "";
+  if (error) {
+    errorEl.textContent = error.message;
+    return;
+  }
+  const values = {};
+  data.forEach((row) => (values[row.key] = row.value));
+  document.getElementById("setting-second-reviewer").value = values.second_reviewer_threshold ?? 0;
+  document.getElementById("setting-md-approval").value = values.md_approval_threshold ?? 0;
+  document.getElementById("setting-renewal-days").value = values.contract_renewal_alert_days ?? 60;
+}
+
+document.getElementById("settings-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById("settings-error");
+  const successEl = document.getElementById("settings-success");
+  errorEl.textContent = "";
+  successEl.textContent = "";
+
+  const updates = [
+    { key: "second_reviewer_threshold", value: document.getElementById("setting-second-reviewer").value },
+    { key: "md_approval_threshold", value: document.getElementById("setting-md-approval").value },
+    { key: "contract_renewal_alert_days", value: document.getElementById("setting-renewal-days").value }
+  ];
+
+  for (const update of updates) {
+    const { error } = await supabase
+      .from("settings")
+      .update({ value: String(update.value), updated_by: currentProfile.id })
+      .eq("key", update.key);
+    if (error) {
+      errorEl.textContent = error.message;
+      return;
+    }
+  }
+
+  successEl.textContent = "Saved.";
+});
+
+// ---- Module loaders, keyed by nav item ----
+
+const MODULE_LOADERS = {
+  sales: loadSalesModule,
+  cybersecurity: loadCybersecurityModule,
+  it_delivery: loadITDeliveryModule,
+  internal_it: loadInternalITModule,
+  finance: loadFinanceModule,
+  operations: loadOperationsModule,
+  settings: loadSettingsModule
+};
 
 // ---- Offline support ----
 if ("serviceWorker" in navigator) {
