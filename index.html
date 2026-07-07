@@ -86,6 +86,10 @@
       <div class="module" data-module="overview">
         <h1>Home</h1>
         <p class="intro">What needs attention, based on your role and department.</p>
+        <div class="section">
+          <div class="section-header"><h2>Needs your action</h2></div>
+          <div id="needs-attention"><p class="intro">Loading</p></div>
+        </div>
         <div id="home-cards" class="section"></div>
       </div>
 
@@ -117,6 +121,16 @@
       <div class="module hidden" data-module="sales">
         <h1>Sales & Bids</h1>
         <p class="intro">Two pipelines run in parallel: tender based public sector opportunities, and direct private sector opportunities. Channel partner deals are tracked separately.</p>
+
+        <div class="section">
+          <div class="section-header"><h2>Pipeline board</h2></div>
+          <div id="kanban-board" class="kanban-board"></div>
+        </div>
+
+        <div class="section">
+          <div class="section-header"><h2>Win and loss</h2></div>
+          <div id="win-loss-cards" class="section"></div>
+        </div>
 
         <div class="section">
           <div class="section-header"><h2>Tender pipeline</h2></div>
@@ -188,7 +202,7 @@
         <div class="section">
           <div class="section-header"><h2>Leads</h2></div>
           <table class="data-table">
-            <thead><tr><th>Name</th><th>Source</th><th>Status</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Source</th><th>Status</th><th>Score</th><th></th></tr></thead>
             <tbody id="leads-body"><tr><td colspan="4" class="empty">Loading</td></tr></tbody>
           </table>
           <form id="add-lead-form" class="inline-form">
