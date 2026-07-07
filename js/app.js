@@ -258,7 +258,7 @@ async function loadPipeline(pipelineType, bodyId) {
 
   const { data, error } = await supabase
     .from("opportunities")
-    .select("id, stage, value, client_id, clients(name)")
+    .select("id, stage, value, client_id, updated_at, clients(name)")
     .eq("pipeline_type", pipelineType)
     .order("created_at", { ascending: false });
 
@@ -276,8 +276,14 @@ async function loadPipeline(pipelineType, bodyId) {
   data.forEach((row) => {
     const tr = document.createElement("tr");
     const clientName = row.clients ? row.clients.name : "Unknown client";
+    const daysSinceUpdate = Math.round((new Date() - new Date(row.updated_at)) / (1000 * 60 * 60 * 24));
+    const isOpen = row.stage !== "won" && row.stage !== "lost";
+    const stalledBadge =
+      isOpen && daysSinceUpdate >= 14
+        ? `<span class="badge badge-expiring" style="margin-left: 6px;">Stalled</span>`
+        : "";
     tr.innerHTML = `
-      <td><a href="#" class="client-link" data-client-id="${row.client_id}">${clientName}</a></td>
+      <td><a href="#" class="client-link" data-client-id="${row.client_id}">${clientName}</a>${stalledBadge}</td>
       <td>
         <select data-id="${row.id}" class="stage-select">
           ${STAGE_OPTIONS.map(
@@ -1171,11 +1177,16 @@ async function loadHomeModule() {
   const isSystem = currentProfile.role_tier === "system";
 
   if (isSystem || dept === "sales") {
-    const { data: opps } = await supabase.from("opportunities").select("value, stage");
+    const { data: opps } = await supabase.from("opportunities").select("value, stage, updated_at");
     const openOpps = (opps || []).filter((o) => o.stage !== "won" && o.stage !== "lost");
     const openValue = openOpps.reduce((sum, o) => sum + (Number(o.value) || 0), 0);
+    const stalled = openOpps.filter((o) => {
+      const daysSinceUpdate = Math.round((new Date() - new Date(o.updated_at)) / (1000 * 60 * 60 * 24));
+      return daysSinceUpdate >= 14;
+    }).length;
     container.appendChild(statCard("Open opportunities", openOpps.length));
     container.appendChild(statCard("Open pipeline value", formatRand(openValue)));
+    container.appendChild(statCard("Stalled, needs attention", stalled));
 
     const { data: docs } = await supabase.from("compliance_documents").select("expiry_date");
     const expiringSoon = (docs || []).filter((d) => {
@@ -1183,6 +1194,14 @@ async function loadHomeModule() {
       return days !== null && days <= 30;
     }).length;
     container.appendChild(statCard("Compliance documents expiring soon", expiringSoon));
+
+    const alertDays = await getContractRenewalAlertDays();
+    const { data: contractRows } = await supabase.from("contracts").select("end_date");
+    const needingRenewal = (contractRows || []).filter((c) => {
+      const days = daysUntil(c.end_date);
+      return days !== null && days >= 0 && days <= alertDays;
+    }).length;
+    container.appendChild(statCard("Contracts needing renewal", needingRenewal));
   }
 
   if (isSystem || dept === "cybersecurity") {
