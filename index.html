@@ -69,6 +69,10 @@
       <div class="sidebar-brand">
         <img src="brand/logo.png" alt="Cyberxperts" />
       </div>
+      <div class="sidebar-search">
+        <input id="global-search" type="text" placeholder="Search" autocomplete="off" />
+        <div id="search-results" class="search-results hidden"></div>
+      </div>
       <nav id="nav-links"></nav>
       <div class="sidebar-user">
         <p id="nav-name"></p>
@@ -80,11 +84,34 @@
     <main class="content">
 
       <div class="module" data-module="overview">
-        <h1>Overview</h1>
-        <p class="intro">Rollup across every directorate, or your own working area, depending on your access level.</p>
-        <div class="card"><h2>Pipeline status</h2><p>Structure only. Tender pipeline, private sector pipeline, and channel partner deals will appear here.</p></div>
-        <div class="card"><h2>Delivery status</h2><p>Structure only. Active projects across IT Delivery and Cybersecurity managed services.</p></div>
-        <div class="card"><h2>Outstanding approvals</h2><p>Structure only. Anything above a configured threshold, waiting on sign off.</p></div>
+        <h1>Home</h1>
+        <p class="intro">What needs attention, based on your role and department.</p>
+        <div id="home-cards" class="section"></div>
+      </div>
+
+      <div class="module hidden" data-module="my_work">
+        <h1>My Work</h1>
+        <p class="intro">Tasks assigned to you or created by you. The System Super User sees every task.</p>
+        <table class="data-table">
+          <thead><tr><th>Task</th><th>Due date</th><th>Status</th><th></th></tr></thead>
+          <tbody id="tasks-body"><tr><td colspan="4" class="empty">Loading</td></tr></tbody>
+        </table>
+        <form id="add-task-form" class="inline-form">
+          <input id="task-title" type="text" placeholder="Task" required />
+          <input id="task-due" type="date" />
+          <input id="task-note" type="text" placeholder="Note, optional" />
+          <button type="submit">Add task</button>
+        </form>
+        <p id="add-task-error" class="error"></p>
+      </div>
+
+      <div class="module hidden" data-module="notifications">
+        <h1>Notifications</h1>
+        <p class="intro">Addressed to you directly, or to your whole department.</p>
+        <table class="data-table">
+          <thead><tr><th>Message</th><th>When</th><th></th></tr></thead>
+          <tbody id="notifications-body"><tr><td colspan="3" class="empty">Loading</td></tr></tbody>
+        </table>
       </div>
 
       <div class="module hidden" data-module="sales">
@@ -156,6 +183,51 @@
             New contracts are recorded when an opportunity is won. That handoff is not built yet,
             so contracts currently need to be added directly in Supabase's Table Editor.
           </p>
+        </div>
+
+        <div class="section">
+          <div class="section-header"><h2>Leads</h2></div>
+          <table class="data-table">
+            <thead><tr><th>Name</th><th>Source</th><th>Status</th><th></th></tr></thead>
+            <tbody id="leads-body"><tr><td colspan="4" class="empty">Loading</td></tr></tbody>
+          </table>
+          <form id="add-lead-form" class="inline-form">
+            <input id="lead-name" type="text" placeholder="Company or contact name" required />
+            <input id="lead-source" type="text" placeholder="Source, for example referral" />
+            <input id="lead-value" type="number" step="0.01" placeholder="Estimated value in Rand, optional" />
+            <button type="submit">Add lead</button>
+          </form>
+          <p id="add-lead-error" class="error"></p>
+        </div>
+
+        <div class="section">
+          <div class="section-header"><h2>Campaigns</h2></div>
+          <table class="data-table">
+            <thead><tr><th>Name</th><th>Channel</th><th>Budget</th><th>Status</th></tr></thead>
+            <tbody id="campaigns-body"><tr><td colspan="4" class="empty">Loading</td></tr></tbody>
+          </table>
+          <form id="add-campaign-form" class="inline-form">
+            <input id="campaign-name" type="text" placeholder="Campaign name" required />
+            <input id="campaign-channel" type="text" placeholder="Channel, for example LinkedIn" />
+            <input id="campaign-budget" type="number" step="0.01" placeholder="Budget in Rand, optional" />
+            <button type="submit">Add campaign</button>
+          </form>
+          <p id="add-campaign-error" class="error"></p>
+        </div>
+
+        <div class="section">
+          <div class="section-header"><h2>Events</h2></div>
+          <table class="data-table">
+            <thead><tr><th>Name</th><th>Type</th><th>Date</th></tr></thead>
+            <tbody id="events-body"><tr><td colspan="3" class="empty">Loading</td></tr></tbody>
+          </table>
+          <form id="add-event-form" class="inline-form">
+            <input id="event-name" type="text" placeholder="Event name" required />
+            <input id="event-type" type="text" placeholder="Type, for example exhibition" />
+            <input id="event-date" type="date" />
+            <button type="submit">Add event</button>
+          </form>
+          <p id="add-event-error" class="error"></p>
         </div>
       </div>
 
