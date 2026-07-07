@@ -211,3 +211,13 @@ button[type="submit"]:hover, .btn-primary:hover { background: var(--navy-900); }
 .badge-expiring { background: #fdf1de; color: var(--amber-600); }
 .badge-expired { background: #fbe9e9; color: var(--signal-600); }
 .badge-no-date { background: var(--surface-100); color: var(--ink-500); }
+
+.btn-small {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+.data-table input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+}
