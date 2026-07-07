@@ -443,6 +443,93 @@ async function loadContracts() {
   });
 }
 
+async function loadKanbanBoard() {
+  const board = document.getElementById("kanban-board");
+  const openStages = STAGE_OPTIONS.filter((s) => s !== "won" && s !== "lost");
+
+  const { data, error } = await supabase
+    .from("opportunities")
+    .select("id, stage, value, updated_at, clients(name)")
+    .not("stage", "in", "(won,lost)");
+
+  if (error) {
+    board.innerHTML = `<p class="error">${error.message}</p>`;
+    return;
+  }
+
+  board.innerHTML = openStages
+    .map((stage) => {
+      const items = (data || []).filter((o) => o.stage === stage);
+      return `
+        <div class="kanban-column">
+          <div class="kanban-column-header">${stage} · ${items.length}</div>
+          <div class="kanban-cards" data-stage="${stage}">
+            ${items
+              .map((o) => {
+                const clientName = o.clients ? o.clients.name : "Unknown client";
+                const health = computeDealHealth(o);
+                return `
+                  <div class="kanban-card" draggable="true" data-id="${o.id}">
+                    <div class="kanban-card-client">${clientName}</div>
+                    <div class="kanban-card-meta">
+                      ${formatRand(o.value)}
+                      <span class="badge badge-${health.cls}">${health.label}</span>
+                    </div>
+                  </div>`;
+              })
+              .join("")}
+          </div>
+        </div>`;
+    })
+    .join("");
+
+  document.querySelectorAll(".kanban-card").forEach((card) => {
+    card.addEventListener("dragstart", (e) => {
+      e.dataTransfer.setData("text/plain", card.dataset.id);
+    });
+  });
+
+  document.querySelectorAll(".kanban-cards").forEach((col) => {
+    col.addEventListener("dragover", (e) => e.preventDefault());
+    col.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      const id = e.dataTransfer.getData("text/plain");
+      const newStage = col.dataset.stage;
+      const { error: updateError } = await supabase
+        .from("opportunities")
+        .update({ stage: newStage })
+        .eq("id", id);
+      if (updateError) {
+        alert("Could not move this opportunity. " + updateError.message);
+        return;
+      }
+      await loadKanbanBoard();
+      await loadPipeline("tender", "sales-tender-body");
+      await loadPipeline("private", "sales-private-body");
+      await loadPipeline("partner", "sales-partner-body");
+    });
+  });
+}
+
+async function loadWinLoss() {
+  const container = document.getElementById("win-loss-cards");
+  const { data, error } = await supabase.from("opportunities").select("stage, value");
+  if (error) {
+    container.innerHTML = `<p class="error">${error.message}</p>`;
+    return;
+  }
+  const won = (data || []).filter((o) => o.stage === "won");
+  const lost = (data || []).filter((o) => o.stage === "lost");
+  const closed = won.length + lost.length;
+  const winRate = closed ? Math.round((won.length / closed) * 100) : 0;
+  const wonValue = won.reduce((sum, o) => sum + (Number(o.value) || 0), 0);
+
+  container.innerHTML = "";
+  container.appendChild(statCard("Win rate", closed ? winRate + "%" : "No closed deals yet"));
+  container.appendChild(statCard("Won value", formatRand(wonValue)));
+  container.appendChild(statCard("Lost deals", lost.length));
+}
+
 async function loadSalesModule() {
   await Promise.all([
     loadPipeline("tender", "sales-tender-body"),
@@ -452,7 +539,9 @@ async function loadSalesModule() {
     loadContracts(),
     loadLeads(),
     loadCampaigns(),
-    loadEvents()
+    loadEvents(),
+    loadKanbanBoard(),
+    loadWinLoss()
   ]);
 }
 
@@ -1198,7 +1287,58 @@ function statCard(label, value) {
   return div;
 }
 
+async function loadNeedsAttention() {
+  const container = document.getElementById("needs-attention");
+  const items = [];
+  const dept = currentProfile.department;
+  const isSystem = currentProfile.role_tier === "system";
+
+  const { data: myTasks } = await supabase
+    .from("tasks")
+    .select("id, title, due_date")
+    .eq("status", "open")
+    .eq("assigned_to", currentProfile.id);
+  (myTasks || []).forEach((t) =>
+    items.push(`Task: ${t.title}${t.due_date ? " (due " + t.due_date + ")" : ""}`)
+  );
+
+  if (isSystem || dept === "cybersecurity") {
+    const { data: props } = await supabase
+      .from("proposals")
+      .select("id, opportunities(clients(name))")
+      .is("signed_off_by", null);
+    (props || []).forEach((p) =>
+      items.push(`Proposal awaiting scoping: ${p.opportunities?.clients?.name ?? "a client"}`)
+    );
+  }
+
+  if (isSystem) {
+    const { data: thresholdRow } = await supabase
+      .from("settings")
+      .select("value")
+      .eq("key", "md_approval_threshold")
+      .maybeSingle();
+    const threshold = Number(thresholdRow?.value || 0);
+    const { data: invs } = await supabase
+      .from("invoices")
+      .select("id, description, amount, approval_status")
+      .neq("approval_status", "approved");
+    (invs || [])
+      .filter((i) => Number(i.amount) > threshold)
+      .forEach((i) => items.push(`Invoice needs your approval: ${i.description ?? "invoice"}, ${formatRand(i.amount)}`));
+  }
+
+  if (!items.length) {
+    container.innerHTML = `<p class="intro">Nothing needs your action right now.</p>`;
+    return;
+  }
+  container.innerHTML = `<ul style="margin: 0; padding-left: 18px;">${items
+    .map((i) => `<li style="margin-bottom: 6px; font-size: 14px;">${i}</li>`)
+    .join("")}</ul>`;
+}
+
 async function loadHomeModule() {
+  await loadNeedsAttention();
   const container = document.getElementById("home-cards");
   container.innerHTML = "";
   const dept = currentProfile.department;
@@ -1403,25 +1543,47 @@ async function loadNotificationsModule() {
 
 // ---- Leads ----
 
+function computeLeadScore(lead) {
+  let score = 40;
+  const src = (lead.source || "").toLowerCase();
+  if (src.includes("referral") || src.includes("tender")) score += 20;
+  if (lead.value) score += 15;
+  if (lead.status !== "new") score += 10;
+  const daysOld = Math.round((new Date() - new Date(lead.created_at)) / (1000 * 60 * 60 * 24));
+  if (daysOld > 14 && lead.status === "new") score -= 10;
+  score = Math.max(0, Math.min(100, score));
+  let label = "Low";
+  let cls = "expired";
+  if (score >= 70) {
+    label = "High";
+    cls = "valid";
+  } else if (score >= 45) {
+    label = "Medium";
+    cls = "renew-soon";
+  }
+  return { score, label, cls };
+}
+
 async function loadLeads() {
   const tbody = document.getElementById("leads-body");
   const { data, error } = await supabase
     .from("leads")
-    .select("id, name, source, status")
+    .select("id, name, source, status, value, created_at")
     .order("created_at", { ascending: false });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="4" class="empty">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="empty">${error.message}</td></tr>`;
     return;
   }
   if (!data.length) {
-    tbody.innerHTML = `<tr><td colspan="4" class="empty">No leads logged yet.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="empty">No leads logged yet.</td></tr>`;
     return;
   }
 
   tbody.innerHTML = "";
   data.forEach((lead) => {
     const tr = document.createElement("tr");
+    const score = computeLeadScore(lead);
     const convertButton =
       lead.status === "converted"
         ? ""
@@ -1430,6 +1592,7 @@ async function loadLeads() {
       <td>${lead.name}</td>
       <td>${lead.source ?? "—"}</td>
       <td>${lead.status}</td>
+      <td><span class="badge badge-${score.cls}" title="Score ${score.score} of 100">${score.label}</span></td>
       <td>${convertButton}</td>
     `;
     tbody.appendChild(tr);
@@ -1765,13 +1928,46 @@ async function loadClientWorkspace(clientId) {
 
   const { data: clientTasks } = await supabase
     .from("tasks")
-    .select("id, title, due_date, status")
+    .select("id, title, due_date, status, created_at")
     .eq("client_id", clientId)
     .order("due_date", { ascending: true, nullsFirst: false });
+
+  const oppIds = (opportunities || []).map((o) => o.id);
+  const { data: stageHistory } = oppIds.length
+    ? await supabase.from("opportunity_stage_history").select("stage, changed_at").in("opportunity_id", oppIds)
+    : { data: [] };
+
+  const timelineItems = [];
+  (notes || []).forEach((n) => timelineItems.push({ type: "Note", text: n.note, at: n.created_at }));
+  (documents || []).forEach((d) =>
+    timelineItems.push({ type: d.kind === "voice" ? "Voice note" : "Document", text: d.file_name, at: d.created_at })
+  );
+  (clientTasks || []).forEach((t) => timelineItems.push({ type: "Task", text: t.title, at: t.created_at }));
+  (stageHistory || []).forEach((s) => timelineItems.push({ type: "Stage change", text: "Moved to " + s.stage, at: s.changed_at }));
+  timelineItems.sort((a, b) => new Date(b.at) - new Date(a.at));
 
   container.innerHTML = `
     <h1>${client.name}</h1>
     <p class="intro">${client.sector ?? "No sector recorded"}</p>
+
+    <div class="section">
+      <div class="section-header"><h2>Activity timeline</h2></div>
+      <table class="data-table">
+        <thead><tr><th>Type</th><th>What happened</th><th>When</th></tr></thead>
+        <tbody>
+          ${
+            timelineItems.length
+              ? timelineItems
+                  .map(
+                    (i) =>
+                      `<tr><td>${i.type}</td><td>${i.text}</td><td>${new Date(i.at).toLocaleString("en-ZA")}</td></tr>`
+                  )
+                  .join("")
+              : `<tr><td colspan="3" class="empty">Nothing recorded yet.</td></tr>`
+          }
+        </tbody>
+      </table>
+    </div>
 
     <div class="section">
       <div class="section-header"><h2>Opportunities</h2></div>
