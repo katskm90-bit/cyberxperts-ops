@@ -75,6 +75,11 @@ function renderNav(profile) {
   showModule("overview");
   loadHomeModule();
   updateNotificationBadge();
+
+  if (window.location.hash.startsWith("#client/")) {
+    const clientId = window.location.hash.replace("#client/", "");
+    openClientWorkspace(clientId);
+  }
 }
 
 // ---- Auth state evaluation ----
@@ -253,7 +258,7 @@ async function loadPipeline(pipelineType, bodyId) {
 
   const { data, error } = await supabase
     .from("opportunities")
-    .select("id, stage, value, clients(name)")
+    .select("id, stage, value, client_id, clients(name)")
     .eq("pipeline_type", pipelineType)
     .order("created_at", { ascending: false });
 
@@ -272,7 +277,7 @@ async function loadPipeline(pipelineType, bodyId) {
     const tr = document.createElement("tr");
     const clientName = row.clients ? row.clients.name : "Unknown client";
     tr.innerHTML = `
-      <td>${clientName}</td>
+      <td><a href="#" class="client-link" data-client-id="${row.client_id}">${clientName}</a></td>
       <td>
         <select data-id="${row.id}" class="stage-select">
           ${STAGE_OPTIONS.map(
@@ -363,7 +368,7 @@ async function loadContracts() {
 
   const { data, error } = await supabase
     .from("contracts")
-    .select("id, end_date, clients(name)")
+    .select("id, end_date, client_id, clients(name)")
     .order("end_date", { ascending: true });
 
   if (error) {
@@ -396,7 +401,7 @@ async function loadContracts() {
     const clientName = c.clients ? c.clients.name : "Unknown client";
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td>${clientName}</td>
+      <td><a href="#" class="client-link" data-client-id="${c.client_id}">${clientName}</a></td>
       <td>${c.end_date ?? "—"}</td>
       <td><span class="badge badge-${badge}">${label}</span></td>
     `;
@@ -1012,7 +1017,7 @@ async function loadClientOffboarding() {
   const tbody = document.getElementById("offboarding-body");
   const { data, error } = await supabase
     .from("client_offboarding")
-    .select("id, data_returned, access_revoked, retention_confirmed, clients(name)")
+    .select("id, data_returned, access_revoked, retention_confirmed, client_id, clients(name)")
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -1029,7 +1034,7 @@ async function loadClientOffboarding() {
     const clientName = row.clients ? row.clients.name : "Unknown client";
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td>${clientName}</td>
+      <td><a href="#" class="client-link" data-client-id="${row.client_id}">${clientName}</a></td>
       <td><input type="checkbox" data-id="${row.id}" data-field="data_returned" ${row.data_returned ? "checked" : ""} /></td>
       <td><input type="checkbox" data-id="${row.id}" data-field="access_revoked" ${row.access_revoked ? "checked" : ""} /></td>
       <td><input type="checkbox" data-id="${row.id}" data-field="retention_confirmed" ${row.retention_confirmed ? "checked" : ""} /></td>
@@ -1630,6 +1635,228 @@ async function runSearch(query) {
       searchResults.classList.add("hidden");
       searchInput.value = "";
     });
+  });
+}
+
+// ---- Client workspace ----
+
+let lastModuleBeforeWorkspace = "overview";
+
+document.addEventListener("click", (e) => {
+  const link = e.target.closest(".client-link");
+  if (link) {
+    e.preventDefault();
+    openClientWorkspace(link.dataset.clientId);
+  }
+});
+
+async function openClientWorkspace(clientId) {
+  const currentActive = document.querySelector(".nav-link.active");
+  if (currentActive) lastModuleBeforeWorkspace = currentActive.dataset.module;
+  window.location.hash = "client/" + clientId;
+  showModule("client_workspace");
+  document.querySelectorAll(".nav-link").forEach((el) => el.classList.remove("active"));
+  await loadClientWorkspace(clientId);
+}
+
+document.getElementById("workspace-back").addEventListener("click", (e) => {
+  e.preventDefault();
+  window.location.hash = "";
+  showModule(lastModuleBeforeWorkspace);
+  document.querySelectorAll(".nav-link").forEach((el) => {
+    el.classList.toggle("active", el.dataset.module === lastModuleBeforeWorkspace);
+  });
+  if (MODULE_LOADERS[lastModuleBeforeWorkspace]) MODULE_LOADERS[lastModuleBeforeWorkspace]();
+});
+
+async function loadClientWorkspace(clientId) {
+  const container = document.getElementById("client-workspace-content");
+  container.innerHTML = `<p class="intro">Loading</p>`;
+
+  const { data: client, error: clientError } = await supabase
+    .from("clients")
+    .select("id, name, sector")
+    .eq("id", clientId)
+    .single();
+
+  if (clientError || !client) {
+    container.innerHTML = `<p class="error">Could not load this client.</p>`;
+    return;
+  }
+
+  const { data: opportunities } = await supabase
+    .from("opportunities")
+    .select("id, pipeline_type, stage, value")
+    .eq("client_id", clientId);
+
+  const { data: contracts } = await supabase
+    .from("contracts")
+    .select("id, end_date")
+    .eq("client_id", clientId);
+
+  const contractIds = (contracts || []).map((c) => c.id);
+  const { data: projects } = contractIds.length
+    ? await supabase.from("projects").select("id, title, status").in("contract_id", contractIds)
+    : { data: [] };
+
+  const projectIds = (projects || []).map((p) => p.id);
+  const { data: invoices } = projectIds.length
+    ? await supabase.from("invoices").select("id, description, amount, approval_status").in("project_id", projectIds)
+    : { data: [] };
+
+  const { data: notes } = await supabase
+    .from("client_notes")
+    .select("id, note, created_at")
+    .eq("client_id", clientId)
+    .order("created_at", { ascending: false });
+
+  const { data: clientTasks } = await supabase
+    .from("tasks")
+    .select("id, title, due_date, status")
+    .eq("client_id", clientId)
+    .order("due_date", { ascending: true, nullsFirst: false });
+
+  container.innerHTML = `
+    <h1>${client.name}</h1>
+    <p class="intro">${client.sector ?? "No sector recorded"}</p>
+
+    <div class="section">
+      <div class="section-header"><h2>Opportunities</h2></div>
+      <table class="data-table">
+        <thead><tr><th>Pipeline</th><th>Stage</th><th>Value</th></tr></thead>
+        <tbody>
+          ${
+            (opportunities || []).length
+              ? opportunities
+                  .map((o) => `<tr><td>${o.pipeline_type}</td><td>${o.stage}</td><td>${formatRand(o.value)}</td></tr>`)
+                  .join("")
+              : `<tr><td colspan="3" class="empty">None yet.</td></tr>`
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <div class="section-header"><h2>Contracts</h2></div>
+      <table class="data-table">
+        <thead><tr><th>End date</th></tr></thead>
+        <tbody>
+          ${
+            (contracts || []).length
+              ? contracts.map((c) => `<tr><td>${c.end_date ?? "—"}</td></tr>`).join("")
+              : `<tr><td class="empty">None yet.</td></tr>`
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <div class="section-header"><h2>Projects</h2></div>
+      <table class="data-table">
+        <thead><tr><th>Project</th><th>Status</th></tr></thead>
+        <tbody>
+          ${
+            (projects || []).length
+              ? projects.map((p) => `<tr><td>${p.title ?? "Untitled"}</td><td>${p.status}</td></tr>`).join("")
+              : `<tr><td colspan="2" class="empty">None yet.</td></tr>`
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <div class="section-header"><h2>Invoices</h2></div>
+      <table class="data-table">
+        <thead><tr><th>Description</th><th>Amount</th><th>Status</th></tr></thead>
+        <tbody>
+          ${
+            (invoices || []).length
+              ? invoices
+                  .map((i) => `<tr><td>${i.description ?? "—"}</td><td>${formatRand(i.amount)}</td><td>${i.approval_status}</td></tr>`)
+                  .join("")
+              : `<tr><td colspan="3" class="empty">None yet.</td></tr>`
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <div class="section-header"><h2>Notes</h2></div>
+      <table class="data-table">
+        <thead><tr><th>Note</th><th>When</th></tr></thead>
+        <tbody>
+          ${
+            (notes || []).length
+              ? notes
+                  .map((n) => `<tr><td>${n.note}</td><td>${new Date(n.created_at).toLocaleDateString("en-ZA")}</td></tr>`)
+                  .join("")
+              : `<tr><td colspan="2" class="empty">None yet.</td></tr>`
+          }
+        </tbody>
+      </table>
+      <form id="add-note-form" class="inline-form">
+        <input id="note-text" type="text" placeholder="Add a note" required />
+        <button type="submit">Add note</button>
+      </form>
+      <p id="add-note-error" class="error"></p>
+    </div>
+
+    <div class="section">
+      <div class="section-header"><h2>Tasks for this client</h2></div>
+      <table class="data-table">
+        <thead><tr><th>Task</th><th>Due date</th><th>Status</th></tr></thead>
+        <tbody>
+          ${
+            (clientTasks || []).length
+              ? clientTasks.map((t) => `<tr><td>${t.title}</td><td>${t.due_date ?? "—"}</td><td>${t.status}</td></tr>`).join("")
+              : `<tr><td colspan="3" class="empty">None yet.</td></tr>`
+          }
+        </tbody>
+      </table>
+      <form id="add-client-task-form" class="inline-form">
+        <input id="client-task-title" type="text" placeholder="Task" required />
+        <input id="client-task-due" type="date" />
+        <button type="submit">Add task</button>
+      </form>
+      <p id="add-client-task-error" class="error"></p>
+    </div>
+  `;
+
+  document.getElementById("add-note-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const noteText = document.getElementById("note-text").value.trim();
+    const errorEl = document.getElementById("add-note-error");
+    errorEl.textContent = "";
+    const { error } = await supabase.from("client_notes").insert({
+      client_id: clientId,
+      note: noteText,
+      created_by: currentProfile.id
+    });
+    if (error) {
+      errorEl.textContent = error.message;
+      return;
+    }
+    await loadClientWorkspace(clientId);
+  });
+
+  document.getElementById("add-client-task-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const title = document.getElementById("client-task-title").value.trim();
+    const due = document.getElementById("client-task-due").value || null;
+    const errorEl = document.getElementById("add-client-task-error");
+    errorEl.textContent = "";
+    const { error } = await supabase.from("tasks").insert({
+      title,
+      due_date: due,
+      client_id: clientId,
+      assigned_to: currentProfile.id,
+      created_by: currentProfile.id
+    });
+    if (error) {
+      errorEl.textContent = error.message;
+      return;
+    }
+    await loadClientWorkspace(clientId);
   });
 }
 
