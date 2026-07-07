@@ -221,3 +221,52 @@ button[type="submit"]:hover, .btn-primary:hover { background: var(--navy-900); }
   width: 16px;
   height: 16px;
 }
+
+.sidebar-search {
+  position: relative;
+  padding: 12px 12px 0;
+}
+.sidebar-search input {
+  width: 100%;
+  font-size: 13px;
+}
+.search-results {
+  position: absolute;
+  top: 100%;
+  left: 12px;
+  right: 12px;
+  background: var(--surface-0);
+  border: 1px solid var(--surface-200);
+  border-radius: 6px;
+  box-shadow: var(--shadow-card);
+  z-index: 20;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.search-result-item {
+  display: block;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--ink-900);
+  cursor: pointer;
+  border-bottom: 1px solid var(--surface-100);
+}
+.search-result-item:last-child { border-bottom: none; }
+.search-result-item:hover { background: var(--surface-50); }
+.search-result-item .result-type {
+  color: var(--ink-500);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: block;
+}
+
+.nav-badge {
+  display: inline-block;
+  background: var(--signal-600);
+  color: white;
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 1px 6px;
+  margin-left: 6px;
+}
