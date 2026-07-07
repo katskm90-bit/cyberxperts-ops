@@ -1710,6 +1710,12 @@ async function loadClientWorkspace(clientId) {
     .eq("client_id", clientId)
     .order("created_at", { ascending: false });
 
+  const { data: documents } = await supabase
+    .from("documents")
+    .select("id, file_name, file_path, created_at")
+    .eq("client_id", clientId)
+    .order("created_at", { ascending: false });
+
   const { data: clientTasks } = await supabase
     .from("tasks")
     .select("id, title, due_date, status")
@@ -1781,6 +1787,30 @@ async function loadClientWorkspace(clientId) {
     </div>
 
     <div class="section">
+      <div class="section-header"><h2>Documents</h2></div>
+      <table class="data-table">
+        <thead><tr><th>File</th><th>Uploaded</th><th></th></tr></thead>
+        <tbody id="documents-body">
+          ${
+            (documents || []).length
+              ? documents
+                  .map(
+                    (d) =>
+                      `<tr><td>${d.file_name}</td><td>${new Date(d.created_at).toLocaleDateString("en-ZA")}</td><td><button type="button" class="btn-primary btn-small download-doc" data-path="${d.file_path}" data-name="${d.file_name}">Download</button></td></tr>`
+                  )
+                  .join("")
+              : `<tr><td colspan="3" class="empty">None yet.</td></tr>`
+          }
+        </tbody>
+      </table>
+      <form id="add-document-form" class="inline-form">
+        <input id="document-file" type="file" required />
+        <button type="submit">Upload</button>
+      </form>
+      <p id="add-document-error" class="error"></p>
+    </div>
+
+    <div class="section">
       <div class="section-header"><h2>Notes</h2></div>
       <table class="data-table">
         <thead><tr><th>Note</th><th>When</th></tr></thead>
@@ -1821,6 +1851,54 @@ async function loadClientWorkspace(clientId) {
       <p id="add-client-task-error" class="error"></p>
     </div>
   `;
+
+  document.getElementById("add-document-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fileInput = document.getElementById("document-file");
+    const file = fileInput.files[0];
+    const errorEl = document.getElementById("add-document-error");
+    errorEl.textContent = "";
+
+    if (!file) {
+      errorEl.textContent = "Choose a file first.";
+      return;
+    }
+
+    const path = clientId + "/" + Date.now() + "_" + file.name;
+
+    const { error: uploadError } = await supabase.storage.from("client-documents").upload(path, file);
+    if (uploadError) {
+      errorEl.textContent = uploadError.message;
+      return;
+    }
+
+    const { error: recordError } = await supabase.from("documents").insert({
+      client_id: clientId,
+      file_name: file.name,
+      file_path: path,
+      uploaded_by: currentProfile.id
+    });
+
+    if (recordError) {
+      errorEl.textContent = recordError.message;
+      return;
+    }
+
+    await loadClientWorkspace(clientId);
+  });
+
+  document.querySelectorAll(".download-doc").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const { data, error } = await supabase.storage
+        .from("client-documents")
+        .createSignedUrl(btn.dataset.path, 60);
+      if (error || !data) {
+        alert("Could not create a download link. " + (error ? error.message : ""));
+        return;
+      }
+      window.open(data.signedUrl, "_blank");
+    });
+  });
 
   document.getElementById("add-note-form").addEventListener("submit", async (e) => {
     e.preventDefault();
