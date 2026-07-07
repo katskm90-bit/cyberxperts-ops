@@ -44,6 +44,17 @@ function renderNav(profile) {
     { key: "notifications", label: "Notifications" }
   ];
 
+  const canSeeApprovals =
+    profile.role_tier === "system" || profile.department === "finance" || profile.department === "cybersecurity";
+  if (canSeeApprovals) {
+    items.push({ key: "approvals", label: "Approvals" });
+  }
+
+  const canSeePeople = profile.role_tier === "system" || profile.department === "operations";
+  if (canSeePeople) {
+    items.push({ key: "people", label: "People" });
+  }
+
   Object.entries(DEPARTMENTS).forEach(([key, label]) => {
     const canSee = profile.role_tier === "system" || profile.department === key;
     if (canSee) items.push({ key, label });
@@ -779,22 +790,32 @@ async function loadDeliveryTickets() {
   const tbody = document.getElementById("delivery-body");
   const { data, error } = await supabase
     .from("delivery_tickets")
-    .select("id, title, sla_target, status")
+    .select("id, title, sla_target, sla_hours, status, created_at")
     .eq("department", "it_delivery")
     .order("created_at", { ascending: false });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="3" class="empty">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="4" class="empty">${error.message}</td></tr>`;
     return;
   }
   if (!data.length) {
-    tbody.innerHTML = `<tr><td colspan="3" class="empty">No engagements logged yet.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="4" class="empty">No engagements logged yet.</td></tr>`;
     return;
   }
 
   tbody.innerHTML = "";
   data.forEach((t) => {
     const tr = document.createElement("tr");
+    let breachCell = "—";
+    if (t.sla_hours && t.status !== "resolved") {
+      const hoursElapsed = (new Date() - new Date(t.created_at)) / (1000 * 60 * 60);
+      if (hoursElapsed > Number(t.sla_hours)) {
+        breachCell = `<span class="badge badge-expired">Breached</span>`;
+      } else {
+        const hoursLeft = Math.round(Number(t.sla_hours) - hoursElapsed);
+        breachCell = `<span class="badge badge-valid">${hoursLeft}h remaining</span>`;
+      }
+    }
     tr.innerHTML = `
       <td>${t.title ?? "Untitled engagement"}</td>
       <td>${t.sla_target ?? "—"}</td>
@@ -805,6 +826,7 @@ async function loadDeliveryTickets() {
           ).join("")}
         </select>
       </td>
+      <td>${breachCell}</td>
     `;
     tbody.appendChild(tr);
   });
@@ -816,6 +838,7 @@ async function loadDeliveryTickets() {
         .update({ status: e.target.value })
         .eq("id", e.target.dataset.id);
       if (updateError) alert("Could not update this engagement. " + updateError.message);
+      await loadDeliveryTickets();
     });
   });
 }
@@ -825,6 +848,8 @@ document.getElementById("add-delivery-form").addEventListener("submit", async (e
   const form = e.target;
   const title = document.getElementById("delivery-title").value.trim();
   const sla = document.getElementById("delivery-sla").value.trim();
+  const rawSlaHours = document.getElementById("delivery-sla-hours").value;
+  const slaHours = rawSlaHours === "" ? null : Number(rawSlaHours);
   const errorEl = document.getElementById("add-delivery-error");
   errorEl.textContent = "";
 
@@ -832,6 +857,7 @@ document.getElementById("add-delivery-form").addEventListener("submit", async (e
     department: "it_delivery",
     title,
     sla_target: sla || null,
+    sla_hours: slaHours,
     status: "open"
   });
 
@@ -1269,6 +1295,8 @@ const MODULE_LOADERS = {
   overview: loadHomeModule,
   my_work: loadTasksModule,
   notifications: loadNotificationsModule,
+  approvals: loadApprovalsModule,
+  people: loadPeopleModule,
   sales: loadSalesModule,
   cybersecurity: loadCybersecurityModule,
   it_delivery: loadITDeliveryModule,
@@ -1847,6 +1875,285 @@ async function runSearch(query) {
     });
   });
 }
+
+// ---- Approvals centre ----
+// Reuses the exact same actions already built in Cybersecurity and
+// Finance. This screen exists so nobody has to know which module an
+// approval originally belongs to, it collects them in one place.
+
+async function loadApprovalsModule() {
+  await Promise.all([loadApprovalsProposals(), loadApprovalsInvoices()]);
+}
+
+async function loadApprovalsProposals() {
+  const tbody = document.getElementById("approvals-proposals-body");
+  const { data, error } = await supabase
+    .from("proposals")
+    .select("id, scope, requires_second_reviewer, signed_off_by, second_reviewer_id, opportunities(clients(name))")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty">${error.message}</td></tr>`;
+    return;
+  }
+
+  const outstanding = (data || []).filter(
+    (p) => !p.signed_off_by || (p.requires_second_reviewer && !p.second_reviewer_id)
+  );
+
+  if (!outstanding.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty">Nothing outstanding.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = "";
+  outstanding.forEach((p) => {
+    const clientName = p.opportunities && p.opportunities.clients ? p.opportunities.clients.name : "Unknown client";
+    const status = p.signed_off_by ? "Signed off, awaiting second reviewer" : "Awaiting sign off";
+    const actionLabel = p.signed_off_by ? "Second review" : "Sign off";
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${clientName}</td>
+      <td>${p.scope ?? "—"}</td>
+      <td>${status}</td>
+      <td><button type="button" class="btn-primary btn-small" data-id="${p.id}" data-signed="${!!p.signed_off_by}">${actionLabel}</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll("button[data-id]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const alreadySigned = btn.dataset.signed === "true";
+      const patch = alreadySigned ? { second_reviewer_id: currentProfile.id } : { signed_off_by: currentProfile.id };
+      const { error: updateError } = await supabase.from("proposals").update(patch).eq("id", btn.dataset.id);
+      if (updateError) alert("Could not update this proposal. " + updateError.message);
+      await loadApprovalsProposals();
+    });
+  });
+}
+
+async function loadApprovalsInvoices() {
+  const tbody = document.getElementById("approvals-invoices-body");
+
+  const { data: thresholdRow } = await supabase
+    .from("settings")
+    .select("value")
+    .eq("key", "md_approval_threshold")
+    .maybeSingle();
+  const threshold = Number(thresholdRow?.value || 0);
+
+  const { data, error } = await supabase
+    .from("invoices")
+    .select("id, description, amount, approval_status")
+    .neq("approval_status", "approved")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty">${error.message}</td></tr>`;
+    return;
+  }
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty">Nothing outstanding.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = "";
+  data.forEach((inv) => {
+    const needsSystemApproval = Number(inv.amount) > threshold;
+    const canApprove = !needsSystemApproval || currentProfile.role_tier === "system";
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${inv.description ?? "—"}</td>
+      <td>${formatRand(inv.amount)}</td>
+      <td>${needsSystemApproval ? "Needs System Super User" : "pending"}</td>
+      <td>${canApprove ? `<button type="button" class="btn-primary btn-small" data-id="${inv.id}">Approve</button>` : ""}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll("button[data-id]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const { error: updateError } = await supabase
+        .from("invoices")
+        .update({ approval_status: "approved", approved_by: currentProfile.id })
+        .eq("id", btn.dataset.id);
+      if (updateError) alert("Could not approve this invoice. " + updateError.message);
+      await loadApprovalsInvoices();
+    });
+  });
+}
+
+// ---- People, resource directory ----
+
+async function loadPeopleModule() {
+  await Promise.all([loadStaffDirectory(), loadSkills(), populateSkillProfileSelect()]);
+}
+
+async function loadStaffDirectory() {
+  const tbody = document.getElementById("staff-directory-body");
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, full_name, department, role_tier")
+    .order("full_name", { ascending: true });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="3" class="empty">${error.message}</td></tr>`;
+    return;
+  }
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="3" class="empty">No staff records visible.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = data
+    .map(
+      (p) =>
+        `<tr><td>${p.full_name}</td><td>${p.department ? departments[p.department] : "System"}</td><td>${p.role_tier}</td></tr>`
+    )
+    .join("");
+}
+
+async function populateSkillProfileSelect() {
+  const select = document.getElementById("skill-profile");
+  const { data, error } = await supabase.from("profiles").select("id, full_name").order("full_name");
+  if (error || !data) {
+    select.innerHTML = `<option value="">Could not load staff</option>`;
+    return;
+  }
+  select.innerHTML = data.map((p) => `<option value="${p.id}">${p.full_name}</option>`).join("");
+}
+
+async function loadSkills() {
+  const tbody = document.getElementById("skills-body");
+  const { data, error } = await supabase
+    .from("skills")
+    .select("id, skill_name, is_certification, expiry_date, profiles(full_name)")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="3" class="empty">${error.message}</td></tr>`;
+    return;
+  }
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="3" class="empty">None recorded yet.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = data
+    .map((s) => {
+      const staffName = s.profiles ? s.profiles.full_name : "Unknown";
+      let status = "Skill";
+      if (s.is_certification) {
+        const days = daysUntil(s.expiry_date);
+        if (days === null) status = "Certification, no expiry set";
+        else if (days < 0) status = "Certification expired";
+        else if (days <= 60) status = "Certification expiring, " + days + " days left";
+        else status = "Certification valid";
+      }
+      return `<tr><td>${staffName}</td><td>${s.skill_name}</td><td>${status}</td></tr>`;
+    })
+    .join("");
+}
+
+document.getElementById("add-skill-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const profileId = document.getElementById("skill-profile").value;
+  const skillName = document.getElementById("skill-name").value.trim();
+  const isCert = document.getElementById("skill-is-cert").checked;
+  const expiry = document.getElementById("skill-expiry").value || null;
+  const errorEl = document.getElementById("add-skill-error");
+  errorEl.textContent = "";
+
+  const { error } = await supabase.from("skills").insert({
+    profile_id: profileId,
+    skill_name: skillName,
+    is_certification: isCert,
+    expiry_date: isCert ? expiry : null
+  });
+
+  if (error) {
+    errorEl.textContent = error.message;
+    return;
+  }
+  form.reset();
+  await loadSkills();
+});
+
+// ---- Command palette ----
+
+const PALETTE_DESTINATIONS = [
+  { key: "overview", label: "Home" },
+  { key: "my_work", label: "My Work" },
+  { key: "notifications", label: "Notifications" },
+  { key: "approvals", label: "Approvals" },
+  { key: "people", label: "People" },
+  { key: "sales", label: "Sales & Bids" },
+  { key: "cybersecurity", label: "Cybersecurity" },
+  { key: "it_delivery", label: "IT Delivery" },
+  { key: "internal_it", label: "Internal IT & Staff Support" },
+  { key: "finance", label: "Finance" },
+  { key: "operations", label: "Operations" },
+  { key: "settings", label: "Settings" }
+];
+
+const palette = document.getElementById("command-palette");
+const paletteInput = document.getElementById("command-palette-input");
+const paletteResults = document.getElementById("command-palette-results");
+
+function openPalette() {
+  if (document.getElementById("screen-app").classList.contains("hidden")) return;
+  palette.classList.remove("hidden");
+  paletteInput.value = "";
+  renderPaletteResults("");
+  paletteInput.focus();
+}
+
+function closePalette() {
+  palette.classList.add("hidden");
+}
+
+function renderPaletteResults(query) {
+  const q = query.trim().toLowerCase();
+  const matches = PALETTE_DESTINATIONS.filter((d) => d.label.toLowerCase().includes(q));
+  paletteResults.innerHTML = matches
+    .map((d, i) => `<div class="command-palette-item${i === 0 ? " active" : ""}" data-key="${d.key}">${d.label}</div>`)
+    .join("");
+  paletteResults.querySelectorAll(".command-palette-item").forEach((item) => {
+    item.addEventListener("click", () => goToModuleFromPalette(item.dataset.key));
+  });
+}
+
+function goToModuleFromPalette(key) {
+  closePalette();
+  showModule(key);
+  document.querySelectorAll(".nav-link").forEach((el) => {
+    el.classList.toggle("active", el.dataset.module === key);
+  });
+  if (MODULE_LOADERS[key]) MODULE_LOADERS[key]();
+}
+
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    if (palette.classList.contains("hidden")) openPalette();
+    else closePalette();
+  }
+  if (e.key === "Escape") closePalette();
+});
+
+paletteInput.addEventListener("input", () => renderPaletteResults(paletteInput.value));
+
+paletteInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    const first = paletteResults.querySelector(".command-palette-item");
+    if (first) goToModuleFromPalette(first.dataset.key);
+  }
+});
+
+palette.addEventListener("click", (e) => {
+  if (e.target === palette) closePalette();
+});
 
 // ---- Client workspace ----
 
