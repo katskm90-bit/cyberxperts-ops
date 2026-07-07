@@ -11,6 +11,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 </head>
 <body>
 
@@ -85,12 +86,40 @@
 
       <div class="module" data-module="overview">
         <h1>Home</h1>
-        <p class="intro">What needs attention, based on your role and department.</p>
+        <p class="intro">Company pulse, based on your role and department.</p>
+
+        <div id="metric-row" class="metric-row"></div>
+
         <div class="section">
           <div class="section-header"><h2>Needs your action</h2></div>
           <div id="needs-attention"><p class="intro">Loading</p></div>
         </div>
-        <div id="home-cards" class="section"></div>
+
+        <div class="chart-row">
+          <div class="chart-card">
+            <h2>Pipeline by stage</h2>
+            <canvas id="chart-pipeline"></canvas>
+          </div>
+          <div class="chart-card">
+            <h2>Department status</h2>
+            <canvas id="chart-department"></canvas>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-header"><h2>Business timeline</h2></div>
+          <div id="business-timeline" class="timeline-horizontal"></div>
+        </div>
+
+        <div class="section">
+          <div class="section-header"><h2>Department health</h2></div>
+          <div id="home-cards" class="section"></div>
+        </div>
+
+        <div class="section">
+          <div class="section-header"><h2>Recent activity</h2></div>
+          <div id="activity-stream"></div>
+        </div>
       </div>
 
       <div class="module hidden" data-module="my_work">
