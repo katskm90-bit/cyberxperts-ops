@@ -86,78 +86,176 @@
 
       <div class="module" data-module="overview">
         <h1>Home</h1>
-        <p class="intro">Executive summary, current as of this session.</p>
+        <p class="intro">Executive command centre, live from company data.</p>
 
-        <div id="metric-row" class="metric-row"></div>
+        <div id="metric-row" class="metric-row metric-row-dense"></div>
 
-        <div class="section" id="section-insights">
-          <div class="section-header"><h2>Smart insights</h2></div>
-          <div id="smart-insights"></div>
-        </div>
+        <div class="dash-grid">
 
-        <div class="section" id="section-action-centre">
-          <div class="section-header"><h2>What needs your action right now</h2></div>
-          <div id="needs-attention"><p class="intro">Loading</p></div>
-        </div>
+          <div class="dash-panel dash-span-2" id="section-insights">
+            <h2>Executive insights</h2>
+            <div id="smart-insights"></div>
+          </div>
 
-        <div class="section" id="section-revenue">
-          <div class="section-header"><h2>Is revenue on track</h2></div>
-          <div class="chart-row">
-            <div class="chart-card">
-              <h2>Won value by month</h2>
-              <canvas id="chart-monthly-revenue"></canvas>
+          <div class="dash-panel" id="section-action-centre">
+            <h2>What needs your action right now</h2>
+            <div id="needs-attention"><p class="intro">Loading</p></div>
+          </div>
+
+          <div class="dash-panel dash-span-3 hidden" id="section-revenue">
+            <h2>Sales intelligence</h2>
+            <div class="chart-row chart-row-4">
+              <div class="chart-card"><h2>Won value by month</h2><canvas id="chart-monthly-revenue"></canvas></div>
+              <div class="chart-card"><h2>New opportunities by month</h2><canvas id="chart-pipeline-trend"></canvas></div>
+              <div class="chart-card"><h2>Open pipeline value by stage</h2><canvas id="chart-funnel"></canvas></div>
+              <div class="chart-card"><h2>Won versus lost by month</h2><canvas id="chart-winloss"></canvas></div>
             </div>
-            <div class="chart-card">
-              <h2>Pipeline by stage</h2>
-              <canvas id="chart-pipeline"></canvas>
+            <div id="revenue-stats" class="metric-row metric-row-dense"></div>
+            <div class="dash-tables">
+              <div>
+                <h3>Salesperson leaderboard</h3>
+                <table class="data-table"><thead><tr><th>Owner</th><th>Won value</th></tr></thead>
+                <tbody id="leaderboard-body"></tbody></table>
+              </div>
+              <div>
+                <h3>Largest open opportunities</h3>
+                <table class="data-table"><thead><tr><th>Client</th><th>Value</th><th>Stage</th></tr></thead>
+                <tbody id="largest-opps-body"></tbody></table>
+              </div>
+              <div>
+                <h3>Stalled opportunities</h3>
+                <table class="data-table"><thead><tr><th>Client</th><th>Value</th><th>Days idle</th></tr></thead>
+                <tbody id="stalled-opps-body"></tbody></table>
+              </div>
+              <div>
+                <h3>Stage conversion</h3>
+                <table class="data-table"><thead><tr><th>From</th><th>To</th><th>Conversion</th></tr></thead>
+                <tbody id="conversion-body"></tbody></table>
+              </div>
+              <div>
+                <h3>Forecast by month</h3>
+                <table class="data-table"><thead><tr><th>Month</th><th>Weighted value</th></tr></thead>
+                <tbody id="forecast-body"></tbody></table>
+              </div>
+              <div>
+                <h3>Lost opportunity reasons</h3>
+                <table class="data-table"><thead><tr><th>Reason</th><th>Count</th></tr></thead>
+                <tbody id="lost-reasons-body"></tbody></table>
+              </div>
             </div>
           </div>
-          <div id="revenue-stats" class="metric-row"></div>
-          <table class="data-table" style="margin-top: 12px;">
-            <thead><tr><th>Owner</th><th>Won value</th></tr></thead>
-            <tbody id="leaderboard-body"><tr><td colspan="2" class="empty">Loading</td></tr></tbody>
-          </table>
-        </div>
 
-        <div class="section" id="section-clients">
-          <div class="section-header"><h2>Which clients need attention</h2></div>
-          <table class="data-table">
-            <thead><tr><th>Client</th><th>Reason</th></tr></thead>
-            <tbody id="clients-attention-body"><tr><td colspan="2" class="empty">Loading</td></tr></tbody>
-          </table>
-        </div>
+          <div class="dash-panel dash-span-3 hidden" id="section-operations">
+            <h2>Operations command centre</h2>
+            <div id="operations-stats" class="metric-row metric-row-dense"></div>
+            <div class="dash-tables">
+              <div>
+                <h3>Project health</h3>
+                <table class="data-table"><thead><tr><th>Project</th><th>Status</th><th>Health</th></tr></thead>
+                <tbody id="projects-health-body"></tbody></table>
+              </div>
+              <div>
+                <h3>Upcoming milestones</h3>
+                <table class="data-table"><thead><tr><th>Milestone</th><th>Project</th><th>Due</th></tr></thead>
+                <tbody id="milestones-body"></tbody></table>
+              </div>
+              <div>
+                <h3>Staff workload</h3>
+                <table class="data-table"><thead><tr><th>Staff member</th><th>Allocation</th><th>Spare capacity</th></tr></thead>
+                <tbody id="workload-body"></tbody></table>
+              </div>
+              <div>
+                <h3>Upcoming deadlines, next 14 days</h3>
+                <table class="data-table"><thead><tr><th>Item</th><th>Type</th><th>Due</th></tr></thead>
+                <tbody id="deadlines-body"></tbody></table>
+              </div>
+            </div>
+          </div>
 
-        <div class="section" id="section-operations">
-          <div class="section-header"><h2>Is delivery on track</h2></div>
-          <div id="operations-stats" class="metric-row"></div>
-          <table class="data-table" style="margin-top: 12px;">
-            <thead><tr><th>Project</th><th>Status</th></tr></thead>
-            <tbody id="projects-at-risk-body"><tr><td colspan="2" class="empty">Loading</td></tr></tbody>
-          </table>
-        </div>
+          <div class="dash-panel dash-span-3 hidden" id="section-finance">
+            <h2>Financial control</h2>
+            <div class="chart-row">
+              <div class="chart-card"><h2>Approved invoice value by month</h2><canvas id="chart-cashflow"></canvas></div>
+            </div>
+            <div id="finance-stats" class="metric-row metric-row-dense"></div>
+            <div class="dash-tables">
+              <div>
+                <h3>Approval queue</h3>
+                <table class="data-table"><thead><tr><th>Invoice</th><th>Amount</th><th>Status</th></tr></thead>
+                <tbody id="approval-queue-body"></tbody></table>
+              </div>
+              <div>
+                <h3>Aged debtors</h3>
+                <table class="data-table"><thead><tr><th>Age</th><th>Invoices</th><th>Value</th></tr></thead>
+                <tbody id="aged-debtors-body"></tbody></table>
+              </div>
+              <div>
+                <h3>Won value by client</h3>
+                <table class="data-table"><thead><tr><th>Client</th><th>Won value</th></tr></thead>
+                <tbody id="top-customers-body"></tbody></table>
+              </div>
+              <div>
+                <h3>Won value by pipeline</h3>
+                <table class="data-table"><thead><tr><th>Pipeline</th><th>Won value</th></tr></thead>
+                <tbody id="revenue-by-pipeline-body"></tbody></table>
+              </div>
+            </div>
+          </div>
 
-        <div class="section" id="section-finance">
-          <div class="section-header"><h2>What is outstanding financially</h2></div>
-          <div id="finance-stats" class="metric-row"></div>
-        </div>
+          <div class="dash-panel dash-span-2 hidden" id="section-compliance">
+            <h2>Compliance and assurance</h2>
+            <div class="dash-tables">
+              <div>
+                <h3>Documents and corrective actions</h3>
+                <table class="data-table"><thead><tr><th>Item</th><th>Type</th><th>Status</th></tr></thead>
+                <tbody id="compliance-workspace-body"></tbody></table>
+              </div>
+              <div>
+                <h3>Security proposal queue</h3>
+                <table class="data-table"><thead><tr><th>Client</th><th>Scope</th><th>Status</th></tr></thead>
+                <tbody id="proposal-queue-body"></tbody></table>
+              </div>
+            </div>
+            <p class="intro" id="iso-note" style="margin-top: 10px;"></p>
+          </div>
 
-        <div class="section" id="section-compliance">
-          <div class="section-header"><h2>What compliance needs attention</h2></div>
-          <table class="data-table">
-            <thead><tr><th>Item</th><th>Type</th><th>Status</th></tr></thead>
-            <tbody id="compliance-workspace-body"><tr><td colspan="3" class="empty">Loading</td></tr></tbody>
-          </table>
-        </div>
+          <div class="dash-panel hidden" id="section-clients">
+            <h2>Client intelligence</h2>
+            <table class="data-table">
+              <thead><tr><th>Client</th><th>Relationship</th><th>Last contact</th><th>Risk</th><th>Suggested move</th></tr></thead>
+              <tbody id="clients-intel-body"></tbody>
+            </table>
+          </div>
 
-        <div class="section" id="section-people">
-          <div class="section-header"><h2>Is the team stretched or has capacity</h2></div>
-          <div id="people-stats" class="metric-row"></div>
-        </div>
+          <div class="dash-panel dash-span-2 hidden" id="section-people">
+            <h2>People and capacity</h2>
+            <div id="people-stats" class="metric-row metric-row-dense"></div>
+            <div class="dash-tables">
+              <div>
+                <h3>Skills matrix</h3>
+                <table class="data-table"><thead><tr><th>Staff member</th><th>Skills and certifications</th></tr></thead>
+                <tbody id="skills-matrix-body"></tbody></table>
+              </div>
+              <div>
+                <h3>Certifications expiring within 60 days</h3>
+                <table class="data-table"><thead><tr><th>Certification</th><th>Expiry</th></tr></thead>
+                <tbody id="certs-expiring-body"></tbody></table>
+              </div>
+              <div>
+                <h3>Upcoming leave</h3>
+                <table class="data-table"><thead><tr><th>Staff member</th><th>From</th><th>To</th><th>Type</th></tr></thead>
+                <tbody id="leave-body"></tbody></table>
+              </div>
+            </div>
+          </div>
 
-        <div class="section" id="section-activity">
-          <div class="section-header"><h2>What has just happened across the company</h2></div>
-          <div id="activity-filters" class="inline-form" style="margin-bottom: 10px;"></div>
-          <div id="activity-stream"></div>
+          <div class="dash-panel dash-span-3" id="section-activity">
+            <h2>Company activity</h2>
+            <div id="activity-period-filters" class="inline-form" style="margin-bottom: 6px;"></div>
+            <div id="activity-type-filters" class="inline-form" style="margin-bottom: 10px;"></div>
+            <div id="activity-stream"></div>
+          </div>
+
         </div>
       </div>
 
@@ -433,6 +531,13 @@
             <button type="submit">Add project</button>
           </form>
           <p id="add-project-error" class="error"></p>
+          <form id="add-milestone-form" class="inline-form">
+            <select id="milestone-project" required></select>
+            <input id="milestone-title" type="text" placeholder="Milestone" required />
+            <input id="milestone-due" type="date" />
+            <button type="submit">Add milestone</button>
+          </form>
+          <p id="add-milestone-error" class="error"></p>
         </div>
 
         <div class="section">
@@ -482,6 +587,11 @@
             <h2>Contract renewal alert window, in days</h2>
             <p style="margin-bottom: 8px;">How far ahead of expiry a contract shows as needing renewal.</p>
             <input id="setting-renewal-days" type="number" step="1" />
+          </div>
+          <div class="card">
+            <h2>Monthly revenue target, in Rand</h2>
+            <p style="margin-bottom: 8px;">Used by the executive insights to report progress against target.</p>
+            <input id="setting-revenue-target" type="number" step="1" />
           </div>
           <button type="submit">Save settings</button>
           <p id="settings-error" class="error"></p>
@@ -559,6 +669,27 @@
             <button type="submit">Add allocation</button>
           </form>
           <p id="add-allocation-error" class="error"></p>
+        </div>
+
+        <div class="section">
+          <div class="section-header"><h2>Leave</h2></div>
+          <table class="data-table">
+            <thead><tr><th>Staff member</th><th>From</th><th>To</th><th>Type</th></tr></thead>
+            <tbody id="people-leave-body"><tr><td colspan="4" class="empty">Loading</td></tr></tbody>
+          </table>
+          <form id="add-leave-form" class="inline-form">
+            <select id="leave-profile" required></select>
+            <input id="leave-start" type="date" required />
+            <input id="leave-end" type="date" required />
+            <select id="leave-type">
+              <option value="annual">Annual</option>
+              <option value="sick">Sick</option>
+              <option value="family">Family responsibility</option>
+              <option value="unpaid">Unpaid</option>
+            </select>
+            <button type="submit">Add leave</button>
+          </form>
+          <p id="add-leave-error" class="error"></p>
         </div>
       </div>
 
