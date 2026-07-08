@@ -1268,8 +1268,38 @@ document.getElementById("add-offboarding-form").addEventListener("submit", async
 });
 
 async function loadOperationsModule() {
-  await Promise.all([loadProjects(), loadNonConformances(), loadClientOffboarding()]);
+  await Promise.all([loadProjects(), loadNonConformances(), loadClientOffboarding(), populateMilestoneProjectSelect()]);
 }
+
+async function populateMilestoneProjectSelect() {
+  const select = document.getElementById("milestone-project");
+  const { data } = await supabase.from("projects").select("id, title").order("created_at", { ascending: false });
+  select.innerHTML = (data || []).length
+    ? data.map((p) => `<option value="${p.id}">${p.title ?? "Untitled project"}</option>`).join("")
+    : `<option value="">No projects yet</option>`;
+}
+
+document.getElementById("add-milestone-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const projectId = document.getElementById("milestone-project").value;
+  const title = document.getElementById("milestone-title").value.trim();
+  const due = document.getElementById("milestone-due").value || null;
+  const errorEl = document.getElementById("add-milestone-error");
+  errorEl.textContent = "";
+
+  if (!projectId) {
+    errorEl.textContent = "Create a project first, then add milestones to it.";
+    return;
+  }
+
+  const { error } = await supabase.from("milestones").insert({ project_id: projectId, title, due_date: due });
+  if (error) {
+    errorEl.textContent = error.message;
+    return;
+  }
+  form.reset();
+});
 
 // ---- Settings module ----
 
@@ -1286,6 +1316,7 @@ async function loadSettingsModule() {
   document.getElementById("setting-second-reviewer").value = values.second_reviewer_threshold ?? 0;
   document.getElementById("setting-md-approval").value = values.md_approval_threshold ?? 0;
   document.getElementById("setting-renewal-days").value = values.contract_renewal_alert_days ?? 60;
+  document.getElementById("setting-revenue-target").value = values.monthly_revenue_target ?? 0;
 }
 
 document.getElementById("settings-form").addEventListener("submit", async (e) => {
@@ -1298,7 +1329,8 @@ document.getElementById("settings-form").addEventListener("submit", async (e) =>
   const updates = [
     { key: "second_reviewer_threshold", value: document.getElementById("setting-second-reviewer").value },
     { key: "md_approval_threshold", value: document.getElementById("setting-md-approval").value },
-    { key: "contract_renewal_alert_days", value: document.getElementById("setting-renewal-days").value }
+    { key: "contract_renewal_alert_days", value: document.getElementById("setting-renewal-days").value },
+    { key: "monthly_revenue_target", value: document.getElementById("setting-revenue-target").value }
   ];
 
   for (const update of updates) {
@@ -1405,10 +1437,6 @@ const STAGE_WEIGHT = {
   lost: 0
 };
 
-// Fetches once, never throws. Any query that fails returns an empty list
-// instead of stopping everything after it. This is the fix for the
-// regression, one failed call can no longer strand the rest of the page
-// on "Loading" forever.
 async function fetchSafely(queryPromise) {
   try {
     const { data, error } = await queryPromise;
@@ -1423,13 +1451,9 @@ async function fetchSafely(queryPromise) {
   }
 }
 
-// Draws a chart if the library loaded and the data is usable. If Chart is
-// unavailable, or drawing throws for any reason, the canvas is replaced
-// with a plain sentence instead of staying blank or breaking the page.
 function safeChart(canvasId, config, hasData) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
-
   if (!hasData) {
     const p = document.createElement("p");
     p.className = "intro";
@@ -1437,15 +1461,13 @@ function safeChart(canvasId, config, hasData) {
     canvas.replaceWith(p);
     return;
   }
-
   if (typeof Chart === "undefined") {
     const p = document.createElement("p");
     p.className = "intro";
-    p.textContent = "Chart library did not load. Figures are available in the table below.";
+    p.textContent = "Chart library did not load. Figures are shown in the tables.";
     canvas.replaceWith(p);
     return;
   }
-
   try {
     const key = canvasId + "_instance";
     if (window[key]) window[key].destroy();
@@ -1468,61 +1490,117 @@ function showSection(id, visible) {
   if (el) el.classList.toggle("hidden", !visible);
 }
 
-// ---- Section renderers ----
-// Every one of these is synchronous. All the data they need has already
-// been fetched safely before any of them run, so none of them can be
-// interrupted partway through by a network failure.
+function monthKey(dateLike) {
+  return new Date(dateLike).toLocaleDateString("en-ZA", { month: "short", year: "2-digit" });
+}
+
+function daysAgo(dateLike) {
+  return Math.round((new Date() - new Date(dateLike)) / (1000 * 60 * 60 * 24));
+}
+
+// ---- Renderers, all synchronous, all fed from one prefetched object ----
 
 function renderMetricRow(d, dept, isSystem) {
   const tiles = [];
+  const now = new Date();
+  const wonEvents = d.stageHistory.filter((h) => h.stage === "won");
 
-  if (isSystem || dept === "sales") {
-    const open = d.opportunities.filter((o) => o.stage !== "won" && o.stage !== "lost");
-    const grossPipeline = open.reduce((s, o) => s + (Number(o.value) || 0), 0);
-    const weightedPipeline = open.reduce((s, o) => s + (Number(o.value) || 0) * (STAGE_WEIGHT[o.stage] ?? 0.1), 0);
-    tiles.push({ label: "Gross pipeline", value: formatRand(grossPipeline) });
-    tiles.push({ label: "Weighted pipeline", value: formatRand(weightedPipeline) });
-    tiles.push({ label: "Contracts expiring", value: d.contractsNeedingRenewal.length });
-    tiles.push({ label: "Compliance risks", value: d.complianceExpiringSoon.length });
+  function wonInPeriod(from) {
+    return wonEvents
+      .filter((h) => new Date(h.changed_at) >= from)
+      .reduce((s, h) => s + Number(h.opportunities?.value || 0), 0);
   }
 
-  if (isSystem || dept === "operations") {
-    tiles.push({ label: "Open projects", value: d.projects.filter((p) => p.status === "active").length });
-    tiles.push({ label: "SLA breaches", value: d.slaBreaches.length });
+  if (isSystem || dept === "sales") {
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const quarterStart = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1);
+    const yearStart = new Date(now.getFullYear(), 0, 1);
+    tiles.push({ label: "Revenue this month", value: formatRand(wonInPeriod(monthStart)) });
+    tiles.push({ label: "Revenue this quarter", value: formatRand(wonInPeriod(quarterStart)) });
+    tiles.push({ label: "Revenue this year", value: formatRand(wonInPeriod(yearStart)) });
+
+    const open = d.opportunities.filter((o) => o.stage !== "won" && o.stage !== "lost");
+    tiles.push({ label: "Pipeline value", value: formatRand(open.reduce((s, o) => s + Number(o.value || 0), 0)) });
+    tiles.push({
+      label: "Forecast value",
+      value: formatRand(open.reduce((s, o) => s + Number(o.value || 0) * (STAGE_WEIGHT[o.stage] ?? 0.1), 0))
+    });
+
+    const won = d.opportunities.filter((o) => o.stage === "won").length;
+    const lost = d.opportunities.filter((o) => o.stage === "lost").length;
+    tiles.push({ label: "Win rate", value: won + lost ? Math.round((won / (won + lost)) * 100) + "%" : "No closed deals" });
+    tiles.push({ label: "Gross margin", value: "No expense data" });
+    tiles.push({ label: "Contracts expiring", value: d.contractsNeedingRenewal.length });
+    tiles.push({ label: "Compliance risks", value: d.complianceExpiringSoon.length });
+
+    const activeClientIds = new Set();
+    d.opportunities.filter((o) => o.stage !== "lost").forEach((o) => o.client_id && activeClientIds.add(o.client_id));
+    d.contracts
+      .filter((c) => {
+        const days = daysUntil(c.end_date);
+        return days === null || days >= 0;
+      })
+      .forEach((c) => c.client_id && activeClientIds.add(c.client_id));
+    tiles.push({ label: "Active clients", value: activeClientIds.size });
+  }
+
+  if (isSystem || dept === "operations" || dept === "it_delivery") {
+    tiles.push({ label: "Projects at risk", value: d.projectsAtRisk.length });
     tiles.push({ label: "Staff utilisation", value: d.utilisationPercent + "%" });
+    tiles.push({ label: "Open support workload", value: d.tickets.filter((t) => t.status !== "resolved").length });
   }
 
   if (isSystem || dept === "finance") {
     const outstanding = d.invoices.filter((i) => i.approval_status !== "approved");
-    tiles.push({ label: "Cash outstanding", value: formatRand(outstanding.reduce((s, i) => s + Number(i.amount || 0), 0)) });
+    tiles.push({ label: "Outstanding invoices", value: formatRand(outstanding.reduce((s, i) => s + Number(i.amount || 0), 0)) });
   }
 
-  const row = document.getElementById("metric-row");
-  row.innerHTML = tiles.length
+  document.getElementById("metric-row").innerHTML = tiles.length
     ? tiles.map((t) => metricTile(t.label, t.value)).join("")
     : `<p class="intro">No figures available for your role yet.</p>`;
 }
 
 function renderSmartInsights(d, dept, isSystem) {
   const insights = [];
+  const now = new Date();
 
   if (isSystem || dept === "sales") {
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const revenueThisMonth = d.stageHistory
+      .filter((h) => h.stage === "won" && new Date(h.changed_at) >= monthStart)
+      .reduce((s, h) => s + Number(h.opportunities?.value || 0), 0);
+    if (d.revenueTarget > 0) {
+      const pct = Math.round((revenueThisMonth / d.revenueTarget) * 100);
+      if (pct < 100) insights.push(`Revenue is ${100 - pct}% behind this month's target.`);
+      else insights.push(`Revenue is ${pct - 100}% ahead of this month's target.`);
+    }
+
+    const thisMonthNew = d.stageHistory.filter((h) => new Date(h.changed_at) >= monthStart).length;
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastMonthNew = d.stageHistory.filter(
+      (h) => new Date(h.changed_at) >= lastMonthStart && new Date(h.changed_at) < monthStart
+    ).length;
+    if (lastMonthNew > 0 && thisMonthNew < lastMonthNew) {
+      insights.push(`Sales pipeline activity has slowed compared to last month, ${thisMonthNew} movements against ${lastMonthNew}.`);
+    }
+
     if (d.stalledOpportunities.length) {
       insights.push(`${d.stalledOpportunities.length} proposal${d.stalledOpportunities.length === 1 ? "" : "s"} have stalled for over fourteen days.`);
     }
     if (d.contractsNeedingRenewal.length) {
       insights.push(`${d.contractsNeedingRenewal.length} contract${d.contractsNeedingRenewal.length === 1 ? "" : "s"} expire within ${d.renewalAlertDays} days.`);
     }
-    const gross = d.opportunities.filter((o) => o.stage !== "won" && o.stage !== "lost").reduce((s, o) => s + (Number(o.value) || 0), 0);
-    if (gross > 5000000) insights.push(`Open pipeline has crossed R5 million.`);
   }
 
   if (isSystem || dept === "operations") {
-    if (d.overAllocatedCount) insights.push(`${d.overAllocatedCount} staff member${d.overAllocatedCount === 1 ? "" : "s"} exceed 100% utilisation.`);
-    if (d.underAllocatedCount) insights.push(`${d.underAllocatedCount} staff member${d.underAllocatedCount === 1 ? "" : "s"} are below 40% utilisation.`);
+    if (d.projectsAtRisk.length) insights.push(`${d.projectsAtRisk.length} project${d.projectsAtRisk.length === 1 ? "" : "s"} require immediate intervention.`);
+    if (d.overAllocatedCount) insights.push(`${d.overAllocatedCount} staff member${d.overAllocatedCount === 1 ? "" : "s"} exceed 100% allocation.`);
   }
 
   if (isSystem || dept === "finance") {
+    const pending = d.invoices.filter((i) => i.approval_status !== "approved");
+    const pendingValue = pending.reduce((s, i) => s + Number(i.amount || 0), 0);
+    if (pendingValue > 0) insights.push(`Finance has ${formatRand(pendingValue)} awaiting approval.`);
     if (d.overdueInvoices.length) insights.push(`${d.overdueInvoices.length} invoice${d.overdueInvoices.length === 1 ? "" : "s"} are overdue.`);
   }
 
@@ -1531,51 +1609,97 @@ function renderSmartInsights(d, dept, isSystem) {
     if (d.noRecentContactClients.length) insights.push(`${d.noRecentContactClients.length} client${d.noRecentContactClients.length === 1 ? "" : "s"} have had no contact in over forty five days.`);
   }
 
-  const container = document.getElementById("smart-insights");
-  container.innerHTML = insights.length
+  document.getElementById("smart-insights").innerHTML = insights.length
     ? `<ul style="margin: 0; padding-left: 18px;">${insights.map((i) => `<li style="margin-bottom: 6px; font-size: 14px;">${i}</li>`).join("")}</ul>`
     : `<p class="intro">No issues require executive attention.</p>`;
 }
 
-function renderRevenueIntelligence(d, dept, isSystem) {
+function renderSalesIntelligence(d, dept, isSystem) {
   const visible = isSystem || dept === "sales";
   showSection("section-revenue", visible);
   if (!visible) return;
 
-  const won = d.stageHistory.filter((h) => h.stage === "won");
-  const monthBuckets = {};
-  won.forEach((h) => {
-    const key = new Date(h.changed_at).toLocaleDateString("en-ZA", { month: "short", year: "2-digit" });
-    monthBuckets[key] = (monthBuckets[key] || 0) + Number(h.opportunities?.value || 0);
-  });
-  const monthLabels = Object.keys(monthBuckets).slice(-6);
-  const monthValues = monthLabels.map((k) => monthBuckets[k]);
+  const wonEvents = d.stageHistory.filter((h) => h.stage === "won");
+  const lostEvents = d.stageHistory.filter((h) => h.stage === "lost");
 
+  const wonBuckets = {};
+  wonEvents.forEach((h) => {
+    const key = monthKey(h.changed_at);
+    wonBuckets[key] = (wonBuckets[key] || 0) + Number(h.opportunities?.value || 0);
+  });
+  const wonLabels = Object.keys(wonBuckets).slice(-6);
   safeChart(
     "chart-monthly-revenue",
     {
       type: "line",
-      data: { labels: monthLabels, datasets: [{ label: "Won value", data: monthValues, borderColor: "#2b4d86", backgroundColor: "rgba(43,77,134,0.1)", fill: true, tension: 0.3 }] },
+      data: { labels: wonLabels, datasets: [{ data: wonLabels.map((k) => wonBuckets[k]), borderColor: "#2b4d86", backgroundColor: "rgba(43,77,134,0.1)", fill: true, tension: 0.3 }] },
       options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
     },
-    monthLabels.length > 0
+    wonLabels.length > 0
   );
 
-  const stageCounts = STAGE_OPTIONS.map((s) => d.opportunities.filter((o) => o.stage === s).length);
+  const createdBuckets = {};
+  const firstSeen = {};
+  d.stageHistory.forEach((h) => {
+    if (!firstSeen[h.opportunity_id] || new Date(h.changed_at) < new Date(firstSeen[h.opportunity_id])) {
+      firstSeen[h.opportunity_id] = h.changed_at;
+    }
+  });
+  Object.values(firstSeen).forEach((at) => {
+    const key = monthKey(at);
+    createdBuckets[key] = (createdBuckets[key] || 0) + 1;
+  });
+  const createdLabels = Object.keys(createdBuckets).slice(-6);
   safeChart(
-    "chart-pipeline",
+    "chart-pipeline-trend",
     {
       type: "bar",
-      data: { labels: STAGE_OPTIONS, datasets: [{ label: "Opportunities", data: stageCounts, backgroundColor: "#2b4d86" }] },
+      data: { labels: createdLabels, datasets: [{ data: createdLabels.map((k) => createdBuckets[k]), backgroundColor: "#2b4d86" }] },
       options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
     },
-    d.opportunities.length > 0
+    createdLabels.length > 0
   );
 
-  const avgDealSize = won.length
-    ? formatRand(won.reduce((s, h) => s + Number(h.opportunities?.value || 0), 0) / won.length)
-    : "No won deals yet";
+  const openStages = STAGE_OPTIONS.filter((s) => s !== "won" && s !== "lost");
+  const funnelValues = openStages.map((s) =>
+    d.opportunities.filter((o) => o.stage === s).reduce((sum, o) => sum + Number(o.value || 0), 0)
+  );
+  safeChart(
+    "chart-funnel",
+    {
+      type: "bar",
+      data: { labels: openStages, datasets: [{ data: funnelValues, backgroundColor: "#2b4d86" }] },
+      options: { indexAxis: "y", plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } }
+    },
+    funnelValues.some((v) => v > 0)
+  );
 
+  const wlBuckets = {};
+  [...wonEvents, ...lostEvents].forEach((h) => {
+    const key = monthKey(h.changed_at);
+    if (!wlBuckets[key]) wlBuckets[key] = { won: 0, lost: 0 };
+    wlBuckets[key][h.stage] += 1;
+  });
+  const wlLabels = Object.keys(wlBuckets).slice(-6);
+  safeChart(
+    "chart-winloss",
+    {
+      type: "bar",
+      data: {
+        labels: wlLabels,
+        datasets: [
+          { label: "Won", data: wlLabels.map((k) => wlBuckets[k].won), backgroundColor: "#1f7a4d" },
+          { label: "Lost", data: wlLabels.map((k) => wlBuckets[k].lost), backgroundColor: "#c02a2a" }
+        ]
+      },
+      options: { plugins: { legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
+    },
+    wlLabels.length > 0
+  );
+
+  const avgDealSize = wonEvents.length
+    ? formatRand(wonEvents.reduce((s, h) => s + Number(h.opportunities?.value || 0), 0) / wonEvents.length)
+    : "No won deals yet";
   const byOpp = {};
   d.stageHistory.forEach((r) => {
     if (!byOpp[r.opportunity_id]) byOpp[r.opportunity_id] = [];
@@ -1591,40 +1715,69 @@ function renderRevenueIntelligence(d, dept, isSystem) {
   });
   const avgCycle = cycles.length ? Math.round(cycles.reduce((s, c) => s + c, 0) / cycles.length) + " days" : "Not enough data yet";
 
-  const lostValue = d.opportunities.filter((o) => o.stage === "lost").reduce((s, o) => s + Number(o.value || 0), 0);
-  const wonValue = d.opportunities.filter((o) => o.stage === "won").reduce((s, o) => s + Number(o.value || 0), 0);
-  const leakage = wonValue + lostValue > 0 ? Math.round((lostValue / (wonValue + lostValue)) * 100) + "%" : "No closed deals yet";
-
   document.getElementById("revenue-stats").innerHTML = [
     metricTile("Average deal size", avgDealSize),
-    metricTile("Average sales cycle", avgCycle),
-    metricTile("Pipeline leakage", leakage)
+    metricTile("Average sales cycle", avgCycle)
   ].join("");
 
   const leaderboard = {};
-  won.forEach((h) => {
+  wonEvents.forEach((h) => {
     const name = h.opportunities?.profiles?.full_name ?? "Unassigned";
     leaderboard[name] = (leaderboard[name] || 0) + Number(h.opportunities?.value || 0);
   });
-  const rows = Object.entries(leaderboard).sort((a, b) => b[1] - a[1]);
-  document.getElementById("leaderboard-body").innerHTML = rows.length
-    ? rows.map(([name, value]) => `<tr><td>${name}</td><td>${formatRand(value)}</td></tr>`).join("")
-    : emptyRow(2, "No opportunities recorded.");
-}
+  const lbRows = Object.entries(leaderboard).sort((a, b) => b[1] - a[1]);
+  document.getElementById("leaderboard-body").innerHTML = lbRows.length
+    ? lbRows.map(([name, value]) => `<tr><td>${name}</td><td>${formatRand(value)}</td></tr>`).join("")
+    : emptyRow(2, "No won deals recorded.");
 
-function renderClientIntelligence(d, dept, isSystem) {
-  const visible = isSystem || dept === "sales" || dept === "operations";
-  showSection("section-clients", visible);
-  if (!visible) return;
+  const largest = d.opportunities
+    .filter((o) => o.stage !== "won" && o.stage !== "lost" && o.value)
+    .sort((a, b) => Number(b.value) - Number(a.value))
+    .slice(0, 5);
+  document.getElementById("largest-opps-body").innerHTML = largest.length
+    ? largest.map((o) => `<tr><td>${o.clients?.name ?? "Unknown client"}</td><td>${formatRand(o.value)}</td><td>${o.stage}</td></tr>`).join("")
+    : emptyRow(3, "No opportunities recorded.");
 
-  const rows = [];
-  d.stalledOpportunities.forEach((o) => rows.push({ client: o.clients?.name ?? "Unknown client", reason: "Opportunity stalled 14+ days" }));
-  d.contractsNeedingRenewal.forEach((c) => rows.push({ client: c.clients?.name ?? "Unknown client", reason: "Contract expiring soon" }));
-  d.noRecentContactClients.forEach((name) => rows.push({ client: name, reason: "No contact in over forty five days" }));
+  document.getElementById("stalled-opps-body").innerHTML = d.stalledOpportunities.length
+    ? d.stalledOpportunities
+        .map((o) => `<tr><td>${o.clients?.name ?? "Unknown client"}</td><td>${formatRand(o.value)}</td><td>${daysAgo(o.updated_at)}</td></tr>`)
+        .join("")
+    : emptyRow(3, "Nothing has stalled.");
 
-  document.getElementById("clients-attention-body").innerHTML = rows.length
-    ? rows.map((r) => `<tr><td>${r.client}</td><td>${r.reason}</td></tr>`).join("")
-    : emptyRow(2, "No opportunities recorded.");
+  const reached = openStages.map((s, i) => {
+    const stagesFromHere = STAGE_OPTIONS.slice(i);
+    return new Set(d.stageHistory.filter((h) => stagesFromHere.includes(h.stage)).map((h) => h.opportunity_id)).size;
+  });
+  const convRows = [];
+  for (let i = 0; i < openStages.length - 1; i++) {
+    const pct = reached[i] ? Math.round((reached[i + 1] / reached[i]) * 100) + "%" : "—";
+    convRows.push(`<tr><td>${openStages[i]}</td><td>${openStages[i + 1]}</td><td>${pct}</td></tr>`);
+  }
+  document.getElementById("conversion-body").innerHTML = d.stageHistory.length
+    ? convRows.join("")
+    : emptyRow(3, "No stage movements recorded.");
+
+  const forecastBuckets = {};
+  d.opportunities
+    .filter((o) => o.stage !== "won" && o.stage !== "lost" && o.expected_close_date)
+    .forEach((o) => {
+      const key = monthKey(o.expected_close_date);
+      forecastBuckets[key] = (forecastBuckets[key] || 0) + Number(o.value || 0) * (STAGE_WEIGHT[o.stage] ?? 0.1);
+    });
+  const fRows = Object.entries(forecastBuckets);
+  document.getElementById("forecast-body").innerHTML = fRows.length
+    ? fRows.map(([m, v]) => `<tr><td>${m}</td><td>${formatRand(v)}</td></tr>`).join("")
+    : emptyRow(2, "No expected close dates recorded on open opportunities yet.");
+
+  const reasons = {};
+  d.opportunities.filter((o) => o.stage === "lost").forEach((o) => {
+    const r = o.loss_reason || "Not recorded";
+    reasons[r] = (reasons[r] || 0) + 1;
+  });
+  const rRows = Object.entries(reasons).sort((a, b) => b[1] - a[1]);
+  document.getElementById("lost-reasons-body").innerHTML = rRows.length
+    ? rRows.map(([r, c]) => `<tr><td>${r}</td><td>${c}</td></tr>`).join("")
+    : emptyRow(2, "No lost opportunities recorded.");
 }
 
 function renderOperationsIntelligence(d, dept, isSystem) {
@@ -1632,25 +1785,69 @@ function renderOperationsIntelligence(d, dept, isSystem) {
   showSection("section-operations", visible);
   if (!visible) return;
 
-  const atRisk = d.projects.filter((p) => {
-    if (p.status === "complete") return false;
-    const days = Math.round((new Date() - new Date(p.updated_at || p.created_at || new Date())) / (1000 * 60 * 60 * 24));
-    return p.status === "on_hold" || days >= 21;
-  });
-
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const dueToday = d.tasks.filter((t) => t.due_date === todayStr).length;
+  const slaTracked = d.tickets.filter((t) => t.sla_hours);
+  const slaMet = slaTracked.length
+    ? Math.round(((slaTracked.length - d.slaBreaches.length) / slaTracked.length) * 100) + "%"
+    : "No SLA targets set";
+  const bottlenecks = d.tickets.filter((t) => t.status !== "resolved" && daysAgo(t.created_at) > 7).length;
+  const spareCapacity = d.staff.reduce((s, p) => s + Math.max(0, 100 - (d.allocationTotals[p.id] || 0)), 0);
 
   document.getElementById("operations-stats").innerHTML = [
-    metricTile("Projects at risk", atRisk.length),
+    metricTile("Projects at risk", d.projectsAtRisk.length),
+    metricTile("SLA performance", slaMet),
+    metricTile("Delivery bottlenecks", bottlenecks),
+    metricTile("Spare capacity", spareCapacity + "% across team"),
     metricTile("Overallocated staff", d.overAllocatedCount),
-    metricTile("Idle staff", d.idleCount),
-    metricTile("Tasks due today", dueToday)
+    metricTile("Idle staff", d.idleCount)
   ].join("");
 
-  document.getElementById("projects-at-risk-body").innerHTML = atRisk.length
-    ? atRisk.map((p) => `<tr><td>${p.title ?? "Untitled"}</td><td>${p.status}</td></tr>`).join("")
-    : emptyRow(2, "No active projects.");
+  const active = d.projects.filter((p) => p.status !== "complete");
+  document.getElementById("projects-health-body").innerHTML = active.length
+    ? active
+        .map((p) => {
+          const idle = daysAgo(p.updated_at || p.created_at || new Date());
+          let health = "On track";
+          let cls = "valid";
+          if (p.status === "on_hold") { health = "On hold"; cls = "expired"; }
+          else if (idle >= 21) { health = "Stale, " + idle + " days"; cls = "expiring"; }
+          return `<tr><td>${p.title ?? "Untitled"}</td><td>${p.status}</td><td><span class="badge badge-${cls}">${health}</span></td></tr>`;
+        })
+        .join("")
+    : emptyRow(3, "No active projects.");
+
+  const projectById = {};
+  d.projects.forEach((p) => (projectById[p.id] = p.title ?? "Untitled"));
+  const upcomingMilestones = d.milestones
+    .filter((m) => !m.completed_at)
+    .sort((a, b) => (a.due_date || "9999") < (b.due_date || "9999") ? -1 : 1);
+  document.getElementById("milestones-body").innerHTML = upcomingMilestones.length
+    ? upcomingMilestones
+        .map((m) => `<tr><td>${m.title}</td><td>${projectById[m.project_id] ?? "—"}</td><td>${m.due_date ?? "—"}</td></tr>`)
+        .join("")
+    : emptyRow(3, "No milestones recorded. Add them in Operations.");
+
+  document.getElementById("workload-body").innerHTML = d.staff.length
+    ? d.staff
+        .map((p) => {
+          const total = d.allocationTotals[p.id] || 0;
+          return `<tr><td>${p.full_name}</td><td>${total}%</td><td>${Math.max(0, 100 - total)}%</td></tr>`;
+        })
+        .join("")
+    : emptyRow(3, "No staff records visible.");
+
+  const deadlines = [];
+  d.tasks.forEach((t) => {
+    const days = daysUntil(t.due_date);
+    if (days !== null && days >= 0 && days <= 14) deadlines.push({ item: t.title, type: "Task", due: t.due_date });
+  });
+  upcomingMilestones.forEach((m) => {
+    const days = daysUntil(m.due_date);
+    if (days !== null && days >= 0 && days <= 14) deadlines.push({ item: m.title, type: "Milestone", due: m.due_date });
+  });
+  deadlines.sort((a, b) => (a.due < b.due ? -1 : 1));
+  document.getElementById("deadlines-body").innerHTML = deadlines.length
+    ? deadlines.map((x) => `<tr><td>${x.item}</td><td>${x.type}</td><td>${x.due}</td></tr>`).join("")
+    : emptyRow(3, "Nothing due in the next fourteen days.");
 }
 
 function renderFinancialIntelligence(d, dept, isSystem) {
@@ -1658,21 +1855,78 @@ function renderFinancialIntelligence(d, dept, isSystem) {
   showSection("section-finance", visible);
   if (!visible) return;
 
+  const cashBuckets = {};
+  d.invoices
+    .filter((i) => i.approval_status === "approved" && i.created_at)
+    .forEach((i) => {
+      const key = monthKey(i.created_at);
+      cashBuckets[key] = (cashBuckets[key] || 0) + Number(i.amount || 0);
+    });
+  const cashLabels = Object.keys(cashBuckets).slice(-6);
+  safeChart(
+    "chart-cashflow",
+    {
+      type: "bar",
+      data: { labels: cashLabels, datasets: [{ data: cashLabels.map((k) => cashBuckets[k]), backgroundColor: "#1f7a4d" }] },
+      options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+    },
+    cashLabels.length > 0
+  );
+
   const outstanding = d.invoices.filter((i) => i.approval_status !== "approved");
   const collected = d.invoices.filter((i) => i.approval_status === "approved");
+  const overdueValue = d.overdueInvoices.reduce((s, i) => s + Number(i.amount || 0), 0);
 
-  document.getElementById("finance-stats").innerHTML = outstanding.length || collected.length
-    ? [
-        metricTile("Outstanding invoices", outstanding.length),
-        metricTile("Outstanding value", formatRand(outstanding.reduce((s, i) => s + Number(i.amount || 0), 0))),
-        metricTile("Collected value", formatRand(collected.reduce((s, i) => s + Number(i.amount || 0), 0))),
-        metricTile("Overdue invoices", d.overdueInvoices.length)
-      ].join("")
-    : `<p class="intro">No invoices awaiting approval.</p>`;
+  document.getElementById("finance-stats").innerHTML = [
+    metricTile("Outstanding invoices", outstanding.length),
+    metricTile("Outstanding value", formatRand(outstanding.reduce((s, i) => s + Number(i.amount || 0), 0))),
+    metricTile("Collected value", formatRand(collected.reduce((s, i) => s + Number(i.amount || 0), 0))),
+    metricTile("Collection risk", d.overdueInvoices.length ? formatRand(overdueValue) + " overdue" : "None overdue")
+  ].join("");
+
+  document.getElementById("approval-queue-body").innerHTML = outstanding.length
+    ? outstanding
+        .map((i) => `<tr><td>${i.description ?? "—"}</td><td>${formatRand(i.amount)}</td><td>${i.approval_status}</td></tr>`)
+        .join("")
+    : emptyRow(3, "No invoices awaiting approval.");
+
+  const buckets = { "0 to 30 days": [], "31 to 60 days": [], "61 to 90 days": [], "Over 90 days": [] };
+  d.overdueInvoices.forEach((i) => {
+    const overdueDays = -daysUntil(i.due_date);
+    if (overdueDays <= 30) buckets["0 to 30 days"].push(i);
+    else if (overdueDays <= 60) buckets["31 to 60 days"].push(i);
+    else if (overdueDays <= 90) buckets["61 to 90 days"].push(i);
+    else buckets["Over 90 days"].push(i);
+  });
+  document.getElementById("aged-debtors-body").innerHTML = d.overdueInvoices.length
+    ? Object.entries(buckets)
+        .map(([label, list]) => `<tr><td>${label}</td><td>${list.length}</td><td>${formatRand(list.reduce((s, i) => s + Number(i.amount || 0), 0))}</td></tr>`)
+        .join("")
+    : emptyRow(3, "No overdue invoices.");
+
+  const byClient = {};
+  d.opportunities.filter((o) => o.stage === "won").forEach((o) => {
+    const name = o.clients?.name ?? "Unknown client";
+    byClient[name] = (byClient[name] || 0) + Number(o.value || 0);
+  });
+  const tcRows = Object.entries(byClient).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  document.getElementById("top-customers-body").innerHTML = tcRows.length
+    ? tcRows.map(([n, v]) => `<tr><td>${n}</td><td>${formatRand(v)}</td></tr>`).join("")
+    : emptyRow(2, "No won deals recorded.");
+
+  const byPipeline = {};
+  d.opportunities.filter((o) => o.stage === "won").forEach((o) => {
+    const p = o.pipeline_type ?? "unspecified";
+    byPipeline[p] = (byPipeline[p] || 0) + Number(o.value || 0);
+  });
+  const bpRows = Object.entries(byPipeline);
+  document.getElementById("revenue-by-pipeline-body").innerHTML = bpRows.length
+    ? bpRows.map(([p, v]) => `<tr><td>${p}</td><td>${formatRand(v)}</td></tr>`).join("")
+    : emptyRow(2, "No won deals recorded.");
 }
 
 function renderComplianceIntelligence(d, dept, isSystem) {
-  const visible = isSystem || dept === "sales" || dept === "operations";
+  const visible = isSystem || dept === "sales" || dept === "operations" || dept === "cybersecurity";
   showSection("section-compliance", visible);
   if (!visible) return;
 
@@ -1690,6 +1944,84 @@ function renderComplianceIntelligence(d, dept, isSystem) {
   document.getElementById("compliance-workspace-body").innerHTML = rows.length
     ? rows.map((r) => `<tr><td>${r.item}</td><td>${r.type}</td><td>${r.status}</td></tr>`).join("")
     : emptyRow(3, "No outstanding actions.");
+
+  const queue = d.proposals.filter((p) => !p.signed_off_by || (p.requires_second_reviewer && !p.second_reviewer_id));
+  document.getElementById("proposal-queue-body").innerHTML = queue.length
+    ? queue
+        .map((p) => {
+          const client = p.opportunities?.clients?.name ?? "Unknown client";
+          const status = p.signed_off_by ? "Awaiting second reviewer" : "Awaiting sign off";
+          return `<tr><td>${client}</td><td>${p.scope ?? "—"}</td><td>${status}</td></tr>`;
+        })
+        .join("")
+    : emptyRow(3, "Nothing awaiting sign off.");
+
+  document.getElementById("iso-note").textContent =
+    "Client compliance scoring and ISO control readiness are not shown because no ISO control register or per client compliance assessments exist in the system yet.";
+}
+
+function renderClientIntelligence(d, dept, isSystem) {
+  const visible = isSystem || dept === "sales" || dept === "operations";
+  showSection("section-clients", visible);
+  if (!visible) return;
+
+  const perClient = {};
+  function ensure(name) {
+    if (!perClient[name]) perClient[name] = { contacts: [], lastContact: null, stalled: 0, expiring: 0, wonPipelines: new Set(), openOpps: 0 };
+    return perClient[name];
+  }
+
+  d.contactRows.forEach((c) => {
+    const name = c.clients?.name ?? "Unknown client";
+    const rec = ensure(name);
+    rec.contacts.push(c);
+    if (c.last_contacted_at && (!rec.lastContact || c.last_contacted_at > rec.lastContact)) rec.lastContact = c.last_contacted_at;
+  });
+  d.opportunities.forEach((o) => {
+    const name = o.clients?.name ?? "Unknown client";
+    const rec = ensure(name);
+    if (o.stage === "won") rec.wonPipelines.add(o.pipeline_type);
+    else if (o.stage !== "lost") {
+      rec.openOpps += 1;
+      if (daysAgo(o.updated_at) >= 14) rec.stalled += 1;
+    }
+  });
+  d.contractsNeedingRenewal.forEach((c) => {
+    const name = c.clients?.name ?? "Unknown client";
+    ensure(name).expiring += 1;
+  });
+
+  const rows = Object.entries(perClient).map(([name, rec]) => {
+    const rel = computeRelationshipScore(rec.contacts);
+    let risk = 0;
+    risk += rec.stalled * 25;
+    risk += rec.expiring * 25;
+    const contactDays = rec.lastContact ? -daysUntil(rec.lastContact) : null;
+    if (contactDays === null || contactDays > 45) risk += 25;
+    if (rel.score < 40) risk += 25;
+    risk = Math.min(100, risk);
+    let riskLabel = "Low";
+    let riskCls = "valid";
+    if (risk >= 60) { riskLabel = "High"; riskCls = "expired"; }
+    else if (risk >= 30) { riskLabel = "Medium"; riskCls = "expiring"; }
+
+    let move = "Maintain contact";
+    if (rec.expiring) move = "Start renewal conversation";
+    else if (rec.wonPipelines.size && !rec.openOpps) move = "Cross sell, no open opportunities";
+    else if (rec.stalled) move = "Revive stalled opportunity";
+
+    return { name, rel, lastContact: rec.lastContact ?? "Never recorded", riskLabel, riskCls, move, risk };
+  });
+  rows.sort((a, b) => b.risk - a.risk);
+
+  document.getElementById("clients-intel-body").innerHTML = rows.length
+    ? rows
+        .map(
+          (r) =>
+            `<tr><td>${r.name}</td><td><span class="badge badge-${r.rel.cls}">${r.rel.label}</span></td><td>${r.lastContact}</td><td><span class="badge badge-${r.riskCls}">${r.riskLabel}</span></td><td>${r.move}</td></tr>`
+        )
+        .join("")
+    : emptyRow(5, "No client contacts or opportunities recorded yet.");
 }
 
 function renderPeopleIntelligence(d, dept, isSystem) {
@@ -1699,110 +2031,175 @@ function renderPeopleIntelligence(d, dept, isSystem) {
 
   document.getElementById("people-stats").innerHTML = [
     metricTile("Headcount", d.staff.length),
+    metricTile("Staff utilisation", d.utilisationPercent + "%"),
     metricTile("On the bench", d.idleCount),
-    metricTile("Certifications expiring", d.certsExpiringSoon)
+    metricTile("Certifications expiring", d.certsExpiring.length),
+    metricTile("Performance indicators", "No review data recorded")
   ].join("");
+
+  const skillsByPerson = {};
+  d.skills.forEach((s) => {
+    const name = s.profiles?.full_name ?? "Unknown";
+    if (!skillsByPerson[name]) skillsByPerson[name] = [];
+    skillsByPerson[name].push(s.skill_name + (s.is_certification ? " (cert)" : ""));
+  });
+  const smRows = Object.entries(skillsByPerson);
+  document.getElementById("skills-matrix-body").innerHTML = smRows.length
+    ? smRows.map(([n, list]) => `<tr><td>${n}</td><td>${list.join(", ")}</td></tr>`).join("")
+    : emptyRow(2, "No skills recorded. Add them in People.");
+
+  document.getElementById("certs-expiring-body").innerHTML = d.certsExpiring.length
+    ? d.certsExpiring.map((s) => `<tr><td>${s.skill_name}</td><td>${s.expiry_date}</td></tr>`).join("")
+    : emptyRow(2, "No certifications expiring within sixty days.");
+
+  const upcoming = d.leaveEntries.filter((l) => {
+    const days = daysUntil(l.end_date);
+    return days !== null && days >= 0;
+  });
+  document.getElementById("leave-body").innerHTML = upcoming.length
+    ? upcoming
+        .map((l) => `<tr><td>${l.profiles?.full_name ?? "Unknown"}</td><td>${l.start_date}</td><td>${l.end_date}</td><td>${l.leave_type}</td></tr>`)
+        .join("")
+    : emptyRow(4, "No leave recorded. Leave is added in the People module by Operations.");
 }
 
-function renderActivityStream(notifications, filterDept) {
+let activityFeedCache = [];
+let activityPeriodDays = null;
+let activityType = null;
+
+function buildActivityFeed(d) {
+  const feed = [];
+  d.notifications.forEach((n) =>
+    feed.push({ at: n.created_at, type: "Notification", text: (n.department ? "[" + DEPARTMENTS[n.department] + "] " : "") + n.message })
+  );
+  d.stageHistory
+    .filter((h) => h.stage === "won")
+    .forEach((h) => feed.push({ at: h.changed_at, type: "Win", text: "Opportunity won: " + (h.opportunities?.clients?.name ?? "a client") }));
+  d.clients.forEach((c) => {
+    if (c.created_at) feed.push({ at: c.created_at, type: "New client", text: "Client added: " + c.name });
+  });
+  d.projects.forEach((p) => {
+    if (p.created_at) feed.push({ at: p.created_at, type: "New project", text: "Project created: " + (p.title ?? "Untitled") });
+  });
+  d.staffEvents.forEach((e) =>
+    feed.push({ at: e.created_at, type: "Staff change", text: e.event_type + " event for " + e.staff_name })
+  );
+  feed.sort((a, b) => new Date(b.at) - new Date(a.at));
+  return feed.slice(0, 60);
+}
+
+function renderActivityStream() {
   const container = document.getElementById("activity-stream");
-  const list = filterDept ? notifications.filter((n) => n.department === filterDept) : notifications;
+  let list = activityFeedCache;
+  if (activityPeriodDays) {
+    const cutoff = new Date(Date.now() - activityPeriodDays * 24 * 60 * 60 * 1000);
+    list = list.filter((e) => new Date(e.at) >= cutoff);
+  }
+  if (activityType) list = list.filter((e) => e.type === activityType);
   container.innerHTML = list.length
     ? list
         .map(
-          (n) =>
-            `<div class="activity-row"><span>${n.department ? "[" + DEPARTMENTS[n.department] + "] " : ""}${n.message}</span><span class="activity-when">${new Date(n.created_at).toLocaleString("en-ZA")}</span></div>`
+          (e) =>
+            `<div class="activity-row"><span><strong style="color: var(--ink-500); font-weight: 600;">${e.type}</strong> ${e.text}</span><span class="activity-when">${new Date(e.at).toLocaleString("en-ZA")}</span></div>`
         )
         .join("")
-    : `<div class="activity-row"><span>No activity recorded yet.</span></div>`;
+    : `<div class="activity-row"><span>No activity in this view. Adjust the filters above or check back once more has happened.</span></div>`;
 }
 
-function renderActivityFilters(notifications) {
-  const container = document.getElementById("activity-filters");
-  const options = [{ key: "", label: "All" }, ...Object.entries(DEPARTMENTS).map(([key, label]) => ({ key, label }))];
-  container.innerHTML = options
-    .map((o) => `<button type="button" class="btn-primary btn-small activity-filter-btn" data-key="${o.key}">${o.label}</button>`)
+function renderActivityFilters() {
+  const periods = [
+    { label: "Today", days: 1 },
+    { label: "This week", days: 7 },
+    { label: "This month", days: 31 },
+    { label: "Quarter", days: 92 },
+    { label: "Year", days: 366 },
+    { label: "All", days: null }
+  ];
+  const periodEl = document.getElementById("activity-period-filters");
+  periodEl.innerHTML = periods
+    .map((p) => `<button type="button" class="btn-primary btn-small" data-days="${p.days ?? ""}">${p.label}</button>`)
     .join("");
-  container.querySelectorAll(".activity-filter-btn").forEach((btn) => {
-    btn.addEventListener("click", () => renderActivityStream(notifications, btn.dataset.key || null));
+  periodEl.querySelectorAll("button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      activityPeriodDays = btn.dataset.days ? Number(btn.dataset.days) : null;
+      renderActivityStream();
+    });
+  });
+
+  const types = ["All", "Win", "New client", "New project", "Staff change", "Notification"];
+  const typeEl = document.getElementById("activity-type-filters");
+  typeEl.innerHTML = types
+    .map((t) => `<button type="button" class="btn-primary btn-small" data-type="${t === "All" ? "" : t}">${t}</button>`)
+    .join("");
+  typeEl.querySelectorAll("button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      activityType = btn.dataset.type || null;
+      renderActivityStream();
+    });
   });
 }
 
-// ---- The single orchestrator ----
-// Fetches every dataset the dashboard needs, once, safely, then hands the
-// result to each renderer. Nothing renders until everything has either
-// arrived or safely failed into an empty list. This is what prevents the
-// regression from happening again.
+// ---- The orchestrator ----
 
 async function loadExecutiveDashboard() {
   const dept = currentProfile.department;
   const isSystem = currentProfile.role_tier === "system";
 
   const [
-    opportunities,
-    contracts,
-    complianceDocs,
-    invoices,
-    projects,
-    tickets,
-    allocations,
-    staff,
-    contactRows,
-    nonConformances,
-    skills,
-    stageHistory,
-    tasks,
-    notifications
+    opportunities, contracts, complianceDocs, invoices, projects, tickets,
+    allocations, staff, contactRows, nonConformances, skills, stageHistory,
+    tasks, notifications, proposals, milestones, leaveEntries, clients,
+    staffEvents, settingsRows
   ] = await Promise.all([
-    fetchSafely(supabase.from("opportunities").select("id, value, stage, updated_at, owner_id, client_id, clients(name)")),
+    fetchSafely(supabase.from("opportunities").select("id, value, stage, updated_at, owner_id, client_id, pipeline_type, expected_close_date, loss_reason, clients(name)")),
     fetchSafely(supabase.from("contracts").select("id, end_date, client_id, clients(name)")),
     fetchSafely(supabase.from("compliance_documents").select("id, name, expiry_date")),
-    fetchSafely(supabase.from("invoices").select("id, description, amount, approval_status, due_date")),
+    fetchSafely(supabase.from("invoices").select("id, description, amount, approval_status, due_date, created_at")),
     fetchSafely(supabase.from("projects").select("id, title, status, updated_at, created_at")),
     fetchSafely(supabase.from("delivery_tickets").select("id, status, sla_hours, created_at").eq("department", "it_delivery")),
     fetchSafely(supabase.from("resource_allocations").select("profile_id, allocation_percent, profiles(full_name)")),
     fetchSafely(supabase.from("profiles").select("id, full_name")),
-    fetchSafely(supabase.from("contacts").select("id, last_contacted_at, client_id, clients(name)")),
+    fetchSafely(supabase.from("contacts").select("id, last_contacted_at, client_id, role_type, clients(name)")),
     fetchSafely(supabase.from("non_conformances").select("id, finding, closed_at, due_date")),
-    fetchSafely(supabase.from("skills").select("id, is_certification, expiry_date")),
-    fetchSafely(
-      supabase
-        .from("opportunity_stage_history")
-        .select("opportunity_id, stage, changed_at, opportunities(value, owner_id, profiles(full_name))")
-    ),
+    fetchSafely(supabase.from("skills").select("id, skill_name, is_certification, expiry_date, profiles(full_name)")),
+    fetchSafely(supabase.from("opportunity_stage_history").select("opportunity_id, stage, changed_at, opportunities(value, owner_id, clients(name), profiles(full_name))")),
     fetchSafely(supabase.from("tasks").select("id, title, due_date, status").eq("status", "open")),
-    fetchSafely(
-      supabase.from("notifications").select("message, department, created_at").order("created_at", { ascending: false }).limit(20)
-    )
+    fetchSafely(supabase.from("notifications").select("message, department, created_at").order("created_at", { ascending: false }).limit(30)),
+    fetchSafely(supabase.from("proposals").select("id, scope, signed_off_by, requires_second_reviewer, second_reviewer_id, opportunities(clients(name))")),
+    fetchSafely(supabase.from("milestones").select("id, project_id, title, due_date, completed_at")),
+    fetchSafely(supabase.from("leave_entries").select("id, start_date, end_date, leave_type, profiles(full_name)")),
+    fetchSafely(supabase.from("clients").select("id, name, created_at")),
+    fetchSafely(supabase.from("staff_events").select("staff_name, event_type, created_at")),
+    fetchSafely(supabase.from("settings").select("key, value"))
   ]);
 
-  const renewalAlertDays = await getContractRenewalAlertDays();
+  const settingsMap = {};
+  settingsRows.forEach((r) => (settingsMap[r.key] = r.value));
+  const renewalAlertDays = Number(settingsMap.contract_renewal_alert_days || 60);
+  const revenueTarget = Number(settingsMap.monthly_revenue_target || 0);
 
-  const stalledOpportunities = opportunities.filter((o) => {
-    if (o.stage === "won" || o.stage === "lost") return false;
-    const days = Math.round((new Date() - new Date(o.updated_at)) / (1000 * 60 * 60 * 24));
-    return days >= 14;
-  });
-
+  const stalledOpportunities = opportunities.filter(
+    (o) => o.stage !== "won" && o.stage !== "lost" && daysAgo(o.updated_at) >= 14
+  );
   const contractsNeedingRenewal = contracts.filter((c) => {
     const days = daysUntil(c.end_date);
     return days !== null && days >= 0 && days <= renewalAlertDays;
   });
-
   const complianceExpiringSoon = complianceDocs.filter((doc) => {
     const days = daysUntil(doc.expiry_date);
     return days !== null && days <= 30;
   });
-
   const overdueInvoices = invoices.filter((i) => {
     const days = daysUntil(i.due_date);
     return i.approval_status !== "approved" && days !== null && days < 0;
   });
-
   const slaBreaches = tickets.filter((t) => {
     if (t.status === "resolved" || !t.sla_hours) return false;
-    const hoursElapsed = (new Date() - new Date(t.created_at)) / (1000 * 60 * 60);
-    return hoursElapsed > Number(t.sla_hours);
+    return (new Date() - new Date(t.created_at)) / (1000 * 60 * 60) > Number(t.sla_hours);
+  });
+  const projectsAtRisk = projects.filter((p) => {
+    if (p.status === "complete") return false;
+    return p.status === "on_hold" || daysAgo(p.updated_at || p.created_at || new Date()) >= 21;
   });
 
   const allocationTotals = {};
@@ -1810,7 +2207,6 @@ async function loadExecutiveDashboard() {
     allocationTotals[a.profile_id] = (allocationTotals[a.profile_id] || 0) + Number(a.allocation_percent || 0);
   });
   const overAllocatedCount = Object.values(allocationTotals).filter((v) => v > 100).length;
-  const underAllocatedCount = staff.filter((p) => (allocationTotals[p.id] || 0) > 0 && (allocationTotals[p.id] || 0) < 40).length;
   const idleCount = staff.filter((p) => !allocationTotals[p.id]).length;
   const utilisationPercent = staff.length
     ? Math.round((Object.values(allocationTotals).reduce((s, v) => s + Math.min(v, 100), 0) / (staff.length * 100)) * 100)
@@ -1830,56 +2226,41 @@ async function loadExecutiveDashboard() {
     })
     .map(([name]) => name);
 
-  const certsExpiringSoon = skills.filter((s) => {
+  const certsExpiring = skills.filter((s) => {
     if (!s.is_certification) return false;
     const days = daysUntil(s.expiry_date);
     return days !== null && days >= 0 && days <= 60;
-  }).length;
+  });
 
   const d = {
-    opportunities,
-    contracts,
-    complianceDocs,
-    invoices,
-    projects,
-    tickets,
-    allocations,
-    staff,
-    nonConformances,
-    skills,
-    stageHistory,
-    tasks,
-    notifications,
-    renewalAlertDays,
-    stalledOpportunities,
-    contractsNeedingRenewal,
-    complianceExpiringSoon,
-    overdueInvoices,
-    slaBreaches,
-    overAllocatedCount,
-    underAllocatedCount,
-    idleCount,
-    utilisationPercent,
-    noRecentContactClients,
-    certsExpiringSoon
+    opportunities, contracts, complianceDocs, invoices, projects, tickets,
+    allocations, staff, contactRows, nonConformances, skills, stageHistory,
+    tasks, notifications, proposals, milestones, leaveEntries, clients,
+    staffEvents, renewalAlertDays, revenueTarget, stalledOpportunities,
+    contractsNeedingRenewal, complianceExpiringSoon, overdueInvoices,
+    slaBreaches, projectsAtRisk, allocationTotals, overAllocatedCount,
+    idleCount, utilisationPercent, noRecentContactClients, certsExpiring
   };
 
   renderMetricRow(d, dept, isSystem);
   renderSmartInsights(d, dept, isSystem);
-  renderRevenueIntelligence(d, dept, isSystem);
-  renderClientIntelligence(d, dept, isSystem);
+  renderSalesIntelligence(d, dept, isSystem);
   renderOperationsIntelligence(d, dept, isSystem);
   renderFinancialIntelligence(d, dept, isSystem);
   renderComplianceIntelligence(d, dept, isSystem);
+  renderClientIntelligence(d, dept, isSystem);
   renderPeopleIntelligence(d, dept, isSystem);
-  renderActivityFilters(notifications);
-  renderActivityStream(notifications);
+
+  activityFeedCache = buildActivityFeed(d);
+  renderActivityFilters();
+  renderActivityStream();
 }
 
 async function loadHomeModule() {
   await loadNeedsAttention();
   await loadExecutiveDashboard();
 }
+
 
 
 // ---- Tasks, My Work ----
@@ -2429,9 +2810,57 @@ async function loadPeopleModule() {
     loadSkills(),
     populateSkillProfileSelect(),
     loadUtilisation(),
-    populateAllocationSelects()
+    populateAllocationSelects(),
+    loadLeaveEntries(),
+    populateLeaveProfileSelect()
   ]);
 }
+
+async function loadLeaveEntries() {
+  const tbody = document.getElementById("people-leave-body");
+  const { data, error } = await supabase
+    .from("leave_entries")
+    .select("id, start_date, end_date, leave_type, profiles(full_name)")
+    .order("start_date", { ascending: true });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty">${error.message}</td></tr>`;
+    return;
+  }
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty">No leave recorded yet.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = data
+    .map((l) => `<tr><td>${l.profiles?.full_name ?? "Unknown"}</td><td>${l.start_date}</td><td>${l.end_date}</td><td>${l.leave_type}</td></tr>`)
+    .join("");
+}
+
+async function populateLeaveProfileSelect() {
+  const select = document.getElementById("leave-profile");
+  const { data } = await supabase.from("profiles").select("id, full_name").order("full_name");
+  select.innerHTML = (data || []).map((p) => `<option value="${p.id}">${p.full_name}</option>`).join("");
+}
+
+document.getElementById("add-leave-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const errorEl = document.getElementById("add-leave-error");
+  errorEl.textContent = "";
+
+  const { error } = await supabase.from("leave_entries").insert({
+    profile_id: document.getElementById("leave-profile").value,
+    start_date: document.getElementById("leave-start").value,
+    end_date: document.getElementById("leave-end").value,
+    leave_type: document.getElementById("leave-type").value
+  });
+  if (error) {
+    errorEl.textContent = error.message;
+    return;
+  }
+  form.reset();
+  await loadLeaveEntries();
+});
 
 async function loadUtilisation() {
   const tbody = document.getElementById("utilisation-body");
